@@ -1,22 +1,38 @@
 {
   // Cloudflare account that owns every Worker and provisioned resource.
   // Find it: https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/
-  "accountId": "<CLOUDFLARE_ACCOUNT_ID>",
+  "accountId": "624d34a0bb22778f8061cc71fefe58cc",
 
   // Worker names are permanent service identities. Keep them unique within the account.
   // Reference: docs/customization.md#workers-and-routing
   "workers": {
     "workshop": {
-      "name": "<WORKSHOP_WORKER_NAME>",
+      "name": "radial-os",
 
       // Production: use a hostname in an active Cloudflare zone. Wrangler creates DNS and TLS.
       // Evaluation: replace this with "route": { "workersDev": true }.
       // https://developers.cloudflare.com/workers/configuration/routing/custom-domains/
-      "route": { "customDomain": "os.example.com" }
+      "route": { "customDomain": "radial.zone" }
     },
-    "context": { "name": "<CONTEXT_WORKER_NAME>" },
-    "customGatekeeper": { "name": "<CUSTOM_GATEKEEPER_WORKER_NAME>" },
-    "errorReporter": { "name": "<ERROR_REPORTER_WORKER_NAME>" }
+    "context": { "name": "radial-os-context" },
+    "customGatekeeper": { "name": "radial-os-gatekeeper" },
+    "errorReporter": { "name": "radial-os-errors" },
+
+    // Public-origin router (this wrapper's extension). When set, the router serves the Workshop
+    // route above (assets, /api forwarding, /gatekeeper/<id> paths, inbound email) and the
+    // Workshop Worker becomes internal. Required to deploy any entry in "gatekeepers" below.
+    "router": { "name": "radial-os-router" }
+  },
+
+  // Built-in (upstream) gatekeepers to deploy, keyed by vendor id. OAuth ones need CLIENT_ID and
+  // CLIENT_SECRET installed as secrets on their Worker after the first deploy:
+  //   wrangler secret put CLIENT_ID --name <worker-name>
+  "gatekeepers": {
+    "github": { "name": "radial-os-github" },
+    "linear": { "name": "radial-os-linear" },
+    "mcp": { "name": "radial-os-mcp" },
+    "scheduler": { "name": "radial-os-scheduler" },
+    "email": { "name": "radial-os-email" }
   },
 
   // This starter deploys Cloudflare Access mode. Cloudflare OS also supports built-in password
@@ -25,9 +41,9 @@
   // "admins" gates /admin in every sign-in method.
   // Reference: docs/customization.md#sign-in-methods
   "access": {
-    "issuer": "https://<TEAM_NAME>.cloudflareaccess.com",
-    "audience": "<ACCESS_AUDIENCE>",
-    "admins": ["<ADMIN_EMAIL>"]
+    "issuer": "https://fancy-cell-d93d.cloudflareaccess.com",
+    "audience": "13a0c8e64acde4dfb5b0cda4d43e983077bcaedd9e4e0a67534b9dba724e2017",
+    "admins": ["kristo@radial.racing", "kristo.jorgenson@gmail.com"]
   },
 
   // Optional platform-funded model catalog. Leave disabled to deploy without AI setup.
@@ -49,14 +65,14 @@
 
     // null: Wrangler provisions and remembers a KV namespace on first deploy.
     // string: bind an existing namespace by ID.
-    "kvNamespaceId": null
+    "kvNamespaceId": "e5310604d43e4dde932e9298bbbd6c7e"
   },
 
   // Displayed to agents when the example custom integration is enabled in /admin.
   // Reference: docs/customization.md#custom-gatekeepers
   "customGatekeeper": {
-    "name": "<ORGANIZATION_DISPLAY_NAME>",
-    "message": "<ORGANIZATION_GUIDANCE>"
+    "name": "Radial",
+    "message": "Radial is a pro-cycling fan app (radial.racing). Domain docs and code live in the Pro-Cycling-App GitHub org; the main monorepo is 'radial'."
   },
 
   // Explicit backend issue reports go to a private Worker that emits structured console errors.
@@ -71,9 +87,9 @@
   // null values use Wrangler automatic provisioning. Set IDs/names to reuse owned resources.
   // https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning
   "resources": {
-    "blueprintsKvNamespaceId": null,
-    "avatarsKvNamespaceId": null,
-    "blueprintContentBucket": null
+    "blueprintsKvNamespaceId": "f077208389674fcdbef22ffd684beb62",
+    "avatarsKvNamespaceId": "5adb4089e9314bdb94f5de1c064568d6",
+    "blueprintContentBucket": "radial-os-blueprint-content"
   },
 
   // Structured custom logs stay enabled. Invocation logs and traces are separate volume controls.

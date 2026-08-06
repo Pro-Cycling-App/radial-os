@@ -8,11 +8,27 @@ import { parse, printParseErrorCode } from "jsonc-parser";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // One deployment per checkout; use separate worktrees for concurrent deploys.
 const generatedName = "wrangler.prod.jsonc";
+
+// Built-in (upstream) gatekeepers this wrapper can deploy. Each deploys as its own Worker from the
+// submodule and is bound to both the Workshop (vendor RPC, entrypoint GatekeeperVendor) and the
+// router (HTTP at /gatekeeper/<id>, default entrypoint). Deploying any of these requires
+// `workers.router` (see below): the Workshop itself never routes /gatekeeper/* paths.
+export const BUILTIN_GATEKEEPERS = {
+  github: { dir: "cloudflare-os/packages/gatekeeper-github", pkg: "@gadgets/github-gatekeeper" },
+  linear: { dir: "cloudflare-os/packages/gatekeeper-linear", pkg: "@gadgets/linear-gatekeeper" },
+  mcp: { dir: "cloudflare-os/packages/gatekeeper-mcp", pkg: "@gadgets/mcp-gatekeeper" },
+  scheduler: { dir: "cloudflare-os/packages/gatekeeper-scheduler", pkg: "@gadgets/gatekeeper-scheduler" },
+  email: { dir: "cloudflare-os/packages/gatekeeper-email", pkg: "@gadgets/email-gatekeeper" },
+};
+
 const generatedPaths = {
   workshop: join(root, "cloudflare-os/packages/workshop-backend", generatedName),
   context: join(root, "cloudflare-os/packages/gatekeeper-context", generatedName),
   customGatekeeper: join(root, "packages/custom-gatekeeper", generatedName),
   errorReporter: join(root, "packages/error-reporter", generatedName),
+  router: join(root, "cloudflare-os/packages/router", generatedName),
+  ...Object.fromEntries(Object.entries(BUILTIN_GATEKEEPERS).map(([id, { dir }]) =>
+    [`gatekeeper-${id}`, join(root, dir, generatedName)])),
 };
 
 const requiredPaths = [
@@ -127,6 +143,47 @@ export function validateConfig(config) {
     throw new Error("Worker names must use lowercase letters, numbers, and hyphens.");
   }
 
+  // Optional router + built-in gatekeepers (this wrapper's extension; absent in upstream configs).
+  // The router is the public origin: it serves the frontend assets, forwards /api to the Workshop,
+  // routes /gatekeeper/<id> to each gatekeeper Worker, and receives inbound email.
+  const gatekeepers = config.gatekeepers ?? {};
+  const gatekeeperIds = Object.keys(gatekeepers);
+  if (gatekeeperIds.length && !config.workers.router) {
+    throw new Error("Deploying built-in gatekeepers requires workers.router (they serve HTTP under /gatekeeper/, which only the router routes).");
+  }
+  for (const id of gatekeeperIds) {
+    if (!BUILTIN_GATEKEEPERS[id]) {
+      throw new Error(`Unknown gatekeeper "${id}". Known: ${Object.keys(BUILTIN_GATEKEEPERS).join(", ")}.`);
+    }
+    if (typeof gatekeepers[id]?.name !== "string" || !gatekeepers[id].name) {
+      throw new Error(`gatekeepers.${id}.name must be a non-empty string.`);
+    }
+  }
+  if (config.workers.router) {
+    if (typeof config.workers.router.name !== "string" || !config.workers.router.name) {
+      throw new Error("workers.router.name must be a non-empty string.");
+    }
+    if (!config.workers.workshop.route?.customDomain) {
+      throw new Error("workers.router requires a customDomain Workshop route (gatekeeper BASE_URLs are derived from it).");
+    }
+  }
+  const extraNames = [
+    ...(config.workers.router ? [config.workers.router.name] : []),
+    ...gatekeeperIds.map((id) => gatekeepers[id].name),
+  ];
+  const allNames = [
+    ...Object.entries(config.workers)
+      .filter(([key]) => key !== "router" && (key !== "errorReporter" || config.errorReporting?.enabled))
+      .map(([, worker]) => worker?.name),
+    ...extraNames,
+  ].filter(Boolean);
+  if (new Set(allNames).size !== allNames.length) {
+    throw new Error("Worker names (including router and gatekeepers) must be unique.");
+  }
+  if (!extraNames.every((name) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name))) {
+    throw new Error("Router and gatekeeper Worker names must use lowercase letters, numbers, and hyphens.");
+  }
+
   const route = config.workers.workshop.route;
   if (!route || Boolean(route.workersDev) === Boolean(route.customDomain)) {
     throw new Error("Set exactly one Workshop route: workersDev or customDomain.");
@@ -239,7 +296,12 @@ export function generateConfigs(config, bases) {
     ? structuredClone(bases.errorReporter)
     : undefined;
 
-  setCommon(workshop, config, config.workers.workshop.name, config.workers.workshop.route);
+  const routerConf = config.workers.router;
+  const gatekeepers = config.gatekeepers ?? {};
+  const route = config.workers.workshop.route;
+  // With a router, the router owns the public route and assets; the Workshop becomes internal.
+  setCommon(workshop, config, config.workers.workshop.name,
+    routerConf ? { workersDev: false } : route);
   workshop.vars = {
     ADMINS: config.access.admins,
     CF_ACCESS_ISS: config.access.issuer.replace(/\/$/, ""),
@@ -287,6 +349,11 @@ export function generateConfigs(config, bases) {
       service: config.workers.customGatekeeper.name,
       entrypoint: "GatekeeperVendor",
     },
+    ...Object.entries(gatekeepers).map(([id, { name }]) => ({
+      binding: `GATEKEEPER_${id.toUpperCase()}`,
+      service: name,
+      entrypoint: "GatekeeperVendor",
+    })),
   ];
   workshop.kv_namespaces = [
     { binding: "BLUEPRINTS", ...(config.resources.blueprintsKvNamespaceId
@@ -298,11 +365,15 @@ export function generateConfigs(config, bases) {
     { binding: "BLUEPRINT_CONTENT", ...(config.resources.blueprintContentBucket
       ? { bucket_name: config.resources.blueprintContentBucket } : {}) },
   ];
-  workshop.assets = {
-    directory: "../workshop-frontend/dist",
-    not_found_handling: "single-page-application",
-    run_worker_first: ["/api", "/api/*", "/blueprint-screenshot/*"],
-  };
+  if (!routerConf) {
+    workshop.assets = {
+      directory: "../workshop-frontend/dist",
+      not_found_handling: "single-page-application",
+      run_worker_first: ["/api", "/api/*", "/blueprint-screenshot/*"],
+    };
+  } else {
+    delete workshop.assets;
+  }
 
   setCommon(context, config, config.workers.context.name);
   context.kv_namespaces = [
@@ -320,12 +391,55 @@ export function generateConfigs(config, bases) {
     setCommon(errorReporter, config, config.workers.errorReporter.name);
   }
 
-  return { workshop, context, customGatekeeper, ...(errorReporter && { errorReporter }) };
+  // Built-in gatekeeper Workers: base config from the submodule package, plus the BASE_URL each
+  // uses to construct its public paths (OAuth redirect URIs, resource URLs).
+  const publicBaseUrl = routerConf ? `https://${route.customDomain}` : undefined;
+  const gatekeeperConfigs = {};
+  for (const [id, { name }] of Object.entries(gatekeepers)) {
+    const gk = structuredClone(bases.gatekeepers[id]);
+    setCommon(gk, config, name);
+    gk.vars = { ...gk.vars, BASE_URL: `${publicBaseUrl}/gatekeeper/${id}` };
+    gatekeeperConfigs[`gatekeeper-${id}`] = gk;
+  }
+
+  // The router: public origin serving assets, /api -> Workshop, /gatekeeper/<id> -> gatekeepers,
+  // and the email() handler -> GATEKEEPER_EMAIL. Generated whole (the submodule's root
+  // wrangler.jsonc is the dev router, not a production base).
+  let router;
+  if (routerConf) {
+    router = {
+      name: routerConf.name,
+      main: "src/index.ts",
+      compatibility_date: "2026-02-02",
+      services: [
+        { binding: "WORKSHOP_BACKEND", service: config.workers.workshop.name },
+        ...Object.entries(gatekeepers).map(([id, { name }]) => ({
+          binding: `GATEKEEPER_${id.toUpperCase()}`,
+          service: name,
+        })),
+      ],
+      assets: {
+        binding: "ASSETS",
+        directory: "../workshop-frontend/dist",
+        not_found_handling: "single-page-application",
+        run_worker_first: ["/api", "/api/*", "/blueprint-screenshot/*", "/gatekeeper/*"],
+      },
+    };
+    setCommon(router, config, routerConf.name, route);
+  }
+
+  return {
+    workshop, context, customGatekeeper,
+    ...(errorReporter && { errorReporter }),
+    ...gatekeeperConfigs,
+    ...(router && { router }),
+  };
 }
 
 async function readJsonc(path) {
   const errors = [];
-  const result = parse(await readFile(path, "utf8"), errors);
+  // allowTrailingComma: some upstream package configs (e.g. gatekeeper-scheduler) use them.
+  const result = parse(await readFile(path, "utf8"), errors, { allowTrailingComma: true });
   if (errors.length) {
     const where = relative(root, path) || path;
     throw new Error(`${where}: ${printParseErrorCode(errors[0].error)} at offset ${errors[0].offset}`);
@@ -364,6 +478,9 @@ function build(config) {
   if (config.errorReporting.enabled) {
     run(["--dir", "packages/error-reporter", "run", "build"]);
   }
+  for (const id of Object.keys(config.gatekeepers ?? {})) {
+    run(["--dir", "cloudflare-os", "--filter", BUILTIN_GATEKEEPERS[id].pkg, "build"]);
+  }
   run(["--dir", "cloudflare-os", "--filter", "@gadgets/workshop-frontend", "build"], root, {
     ...process.env,
     VITE_CF_ACCESS_MODE: "true",
@@ -374,11 +491,16 @@ function build(config) {
 async function main() {
   requireSubmodule();
   const config = await readDeployment(join(root, "deployment.jsonc"));
+  const gatekeeperBases = {};
+  for (const id of Object.keys(config.gatekeepers ?? {})) {
+    gatekeeperBases[id] = await readJsonc(join(root, BUILTIN_GATEKEEPERS[id].dir, "wrangler.jsonc"));
+  }
   const generated = generateConfigs(config, {
     workshop: await readJsonc(join(root, "cloudflare-os/packages/workshop-backend/wrangler.jsonc")),
     context: await readJsonc(join(root, "cloudflare-os/packages/gatekeeper-context/wrangler.jsonc")),
     customGatekeeper: await readJsonc(join(root, "packages/custom-gatekeeper/wrangler.jsonc")),
     errorReporter: await readJsonc(join(root, "packages/error-reporter/wrangler.jsonc")),
+    gatekeepers: gatekeeperBases,
   });
 
   try {
@@ -397,8 +519,17 @@ async function main() {
       join(root, "cloudflare-os/packages/gatekeeper-context"));
     run(["exec", "wrangler", "deploy", "--config", generatedName, ...deployArgs],
       join(root, "packages/custom-gatekeeper"));
+    for (const id of Object.keys(config.gatekeepers ?? {})) {
+      run(["exec", "wrangler", "deploy", "--config", generatedName, ...deployArgs],
+        join(root, BUILTIN_GATEKEEPERS[id].dir));
+    }
     run(["exec", "wrangler", "deploy", "--config", generatedName, ...deployArgs],
       join(root, "cloudflare-os/packages/workshop-backend"));
+    // Router last: it binds the Workshop and every gatekeeper, and takes over the public route.
+    if (config.workers.router) {
+      run(["exec", "wrangler", "deploy", "--config", generatedName, ...deployArgs],
+        join(root, "cloudflare-os/packages/router"));
+    }
   } finally {
     await Promise.all(Object.values(generatedPaths).map((path) => rm(path, { force: true })));
   }
