@@ -50,13 +50,13 @@
   // When enabled, replace every placeholder and install CF_AI_GATEWAY_API_TOKEN separately.
   // Reference: docs/customization.md#ai-models
   "aiGateway": {
-    "enabled": false,
-    "name": "<AI_GATEWAY_NAME>",
-    "accountId": "<AI_GATEWAY_ACCOUNT_ID>",
-    "providers": ["anthropic", "openai", "google", "cloudflare"],
+    "enabled": true,
+    "name": "radial-os",
+    "accountId": "624d34a0bb22778f8061cc71fefe58cc",
+    "providers": ["cloudflare"],
 
     // "direct" sends Workers AI to its REST endpoint. "gateway" adds AI Gateway logs.
-    "workersAi": { "mode": "gateway", "gateway": "<WORKERS_AI_GATEWAY_NAME>" }
+    "workersAi": { "mode": "gateway", "gateway": "radial-os" }
   },
 
   "context": {
