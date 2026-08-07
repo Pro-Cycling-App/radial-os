@@ -17,6 +17,7 @@ export const BUILTIN_GATEKEEPERS = {
   github: { dir: "cloudflare-os/packages/gatekeeper-github", pkg: "@gadgets/github-gatekeeper" },
   linear: { dir: "cloudflare-os/packages/gatekeeper-linear", pkg: "@gadgets/linear-gatekeeper" },
   mcp: { dir: "cloudflare-os/packages/gatekeeper-mcp", pkg: "@gadgets/mcp-gatekeeper" },
+  mcp_portal: { dir: "cloudflare-os/packages/gatekeeper-mcp-portal", pkg: "@gadgets/mcp-portal-gatekeeper" },
   scheduler: { dir: "cloudflare-os/packages/gatekeeper-scheduler", pkg: "@gadgets/gatekeeper-scheduler" },
   email: { dir: "cloudflare-os/packages/gatekeeper-email", pkg: "@gadgets/email-gatekeeper" },
 };
@@ -157,6 +158,11 @@ export function validateConfig(config) {
     }
     if (typeof gatekeepers[id]?.name !== "string" || !gatekeepers[id].name) {
       throw new Error(`gatekeepers.${id}.name must be a non-empty string.`);
+    }
+    const vars = gatekeepers[id].vars;
+    if (vars !== undefined && (typeof vars !== "object" || vars === null || Array.isArray(vars) ||
+        !Object.values(vars).every((value) => typeof value === "string"))) {
+      throw new Error(`gatekeepers.${id}.vars must be an object of string values.`);
     }
   }
   if (config.workers.router) {
@@ -395,10 +401,13 @@ export function generateConfigs(config, bases) {
   // uses to construct its public paths (OAuth redirect URIs, resource URLs).
   const publicBaseUrl = routerConf ? `https://${route.customDomain}` : undefined;
   const gatekeeperConfigs = {};
-  for (const [id, { name }] of Object.entries(gatekeepers)) {
+  for (const [id, { name, vars }] of Object.entries(gatekeepers)) {
     const gk = structuredClone(bases.gatekeepers[id]);
     setCommon(gk, config, name);
-    gk.vars = { ...gk.vars, BASE_URL: `${publicBaseUrl}/gatekeeper/${id}` };
+    // The router serves each gatekeeper at the binding suffix with underscores hyphenated
+    // (GATEKEEPER_MCP_PORTAL -> /gatekeeper/mcp-portal), so BASE_URL must match that transform.
+    const slug = id.replaceAll("_", "-");
+    gk.vars = { ...gk.vars, ...vars, BASE_URL: `${publicBaseUrl}/gatekeeper/${slug}` };
     gatekeeperConfigs[`gatekeeper-${id}`] = gk;
   }
 

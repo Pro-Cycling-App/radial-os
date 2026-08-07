@@ -31,6 +31,16 @@
     "github": { "name": "radial-os-github" },
     "linear": { "name": "radial-os-linear" },
     "mcp": { "name": "radial-os-mcp" },
+    // Admin-curated MCP servers via the Cloudflare MCP Server Portal (AI Controls -> "radial"
+    // portal, endpoint mcp.radial.zone). Servers are added/authed in the portal, not here.
+    "mcp_portal": {
+      "name": "radial-os-mcp-portal",
+      "vars": {
+        "MCP_PORTAL_URL": "https://mcp.radial.zone/mcp",
+        "MCP_PORTAL_NAME": "Radial MCP Portal",
+        "MCP_PORTAL_AUTH": "oauth"
+      }
+    },
     "scheduler": { "name": "radial-os-scheduler" },
     "email": { "name": "radial-os-email" }
   },

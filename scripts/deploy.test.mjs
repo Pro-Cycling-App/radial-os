@@ -207,6 +207,45 @@ test("ignores the gateway name in direct Workers AI mode", async () => {
   assert.equal(generated.workshop.vars.CF_AI_GATEWAY_WAI, undefined);
 });
 
+test("wires router gatekeepers with hyphenated slugs and vars passthrough", async () => {
+  const config = structuredClone(validConfig);
+  config.workers.router = { name: "acme-cloudflare-os-router" };
+  config.gatekeepers = {
+    mcp: { name: "acme-cloudflare-os-mcp" },
+    mcp_portal: {
+      name: "acme-cloudflare-os-mcp-portal",
+      vars: { MCP_PORTAL_URL: "https://portal.example.com/mcp", MCP_PORTAL_AUTH: "oauth" },
+    },
+  };
+
+  const bases = await baseConfigs();
+  bases.gatekeepers = {
+    mcp: await baseConfig("../cloudflare-os/packages/gatekeeper-mcp/wrangler.jsonc"),
+    mcp_portal: await baseConfig("../cloudflare-os/packages/gatekeeper-mcp-portal/wrangler.jsonc"),
+  };
+  const generated = generateConfigs(config, bases);
+
+  // The router's binding scan lowercases and hyphenates the suffix, so BASE_URL must too.
+  assert.equal(generated["gatekeeper-mcp_portal"].vars.BASE_URL,
+    "https://os.example.com/gatekeeper/mcp-portal");
+  assert.equal(generated["gatekeeper-mcp"].vars.BASE_URL,
+    "https://os.example.com/gatekeeper/mcp");
+  assert.equal(generated["gatekeeper-mcp_portal"].vars.MCP_PORTAL_URL,
+    "https://portal.example.com/mcp");
+  assert.equal(generated["gatekeeper-mcp_portal"].vars.MCP_PORTAL_AUTH, "oauth");
+  assert.deepEqual(
+    generated.workshop.services.find((s) => s.binding === "GATEKEEPER_MCP_PORTAL"),
+    { binding: "GATEKEEPER_MCP_PORTAL", service: "acme-cloudflare-os-mcp-portal",
+      entrypoint: "GatekeeperVendor" });
+  assert.deepEqual(
+    generated.router.services.find((s) => s.binding === "GATEKEEPER_MCP_PORTAL"),
+    { binding: "GATEKEEPER_MCP_PORTAL", service: "acme-cloudflare-os-mcp-portal" });
+
+  const badVars = structuredClone(config);
+  badVars.gatekeepers.mcp_portal.vars = { MCP_PORTAL_URL: 42 };
+  assert.throws(() => validateConfig(badVars), /vars/i);
+});
+
 test("generates binding-only storage for automatic provisioning", async () => {
   const config = structuredClone(validConfig);
   config.context.kvNamespaceId = null;
