@@ -28,9 +28,10 @@ Failure
 |- During Wrangler dry-run: generated configuration, build output, or local validation
 |- During live deploy: auth, permission, product, route, provisioning, or resource
 |- After one or more Workers deployed: partial deployment
-|- Browser cannot enter Workshop: route, TLS, Access, or app auth
+|- Browser cannot reach the Router: route, TLS, Access, or app auth
+|- Router answers but a path fails: its service bindings or the Worker behind that path
 |- App loads but capability fails: service binding, Gatekeeper, AI, or storage
-|- Data is absent: binding identity or migration; never provision a replacement first
+|- Data is absent: binding identity, sharing boundary, or migration; never provision a replacement first
 `- Reports/logs are absent: signal semantics, sampling, time range, or binding
 ```
 
@@ -66,13 +67,19 @@ Never use `git submodule update --remote` for setup or recovery.
 | Account ID invalid | Not the exact 32-character account ID | Obtain it from an authorized Cloudflare surface. Do not infer it. |
 | Worker names not unique | Two active Workers share an identity | Select stable non-conflicting names after remote inventory. |
 | Worker name format invalid | Uppercase, punctuation, leading/trailing hyphen, or excessive length | Use a lowercase Cloudflare-compatible service name. |
-| Route requires exactly one mode | Both/neither `customDomain` and `workersDev` selected | Choose one route based on the approved operation mode. |
+| Route requires exactly one mode | Both/neither `customDomain` and `workersDev` selected on the Router | Choose one route based on the approved operation mode. No other Worker takes a route. |
 | Custom domain invalid | URL/path/uppercase supplied instead of hostname | Use the exact lowercase hostname only. |
+| `publicBaseUrl` required on a workersDev route | Nothing in the checkout knows the account's `workers.dev` subdomain, and `PUBLIC_BASE_URL` plus the Context sharing boundary both need an origin | Set it to the exact origin the Router will answer on, scheme included. |
+| `publicBaseUrl` does not match `customDomain` | Two different hostnames configured for one origin | Correct one. Leaving them disagreeing would scope Context data to a host the deployment does not answer on. Prefer `null`, which derives the origin from the domain. |
+| `publicBaseUrl` must be an HTTPS origin only | Path, query, trailing slash, or `http` | Supply the bare origin, e.g. `https://os.example.com`. |
+| `publicBaseUrl` is not a workers.dev origin, or names another Worker | A host other than `https://<router-name>.<subdomain>.workers.dev` on a `workersDev` route | Supply the origin Wrangler actually serves the Router on. Only the account subdomain is unverifiable here; the Worker label and the `workers.dev` suffix are not, and a wrong host would become both `PUBLIC_BASE_URL` and the Context boundary. |
+| `sharingDomain` must be null or a non-empty string | Empty string or a non-string pinned boundary | Use `null` to follow the public origin, or the exact literal the existing collections live under. |
 | Access issuer invalid | Path, query, non-HTTPS, or malformed team origin | Copy the Access team HTTPS origin, without path. |
 | Audience blank/padded | Wrong Access value or whitespace | Copy the exact AUD tag from the matching application. |
 | Admin email invalid | Non-email or mismatched identity representation | Use the exact verified email expected by the backend. |
 | Storage must be null/string | Empty or malformed resource identifier | Choose automatic provisioning (`null`) or a proven existing ID/name. |
-| AI gateway name required | Gateway mode selected without a gateway | Choose direct mode or a reviewed existing/new gateway name. |
+| AI gateway name required | `aiGateway.enabled` is true with no `name` | Supply a reviewed existing or new gateway name, or set `enabled: false` and accept that users must bring their own model keys. |
+| `aiGateway.workersAi` does nothing | An older config still carries the key | Delete it. Workers AI rides the same gateway route as every other provider, and leaving the key in place would deploy a Workshop with no models. List `"cloudflare"` in `providers` to keep Workers AI. |
 | Sampling outside 0..1 | Percentage entered as 10/100 rather than fraction | Set a value from 0 through 1 based on volume and incident needs. |
 
 ## Wrangler Identity And Permissions
@@ -84,7 +91,7 @@ Never use `git submodule update --remote` for setup or recovery.
 | Permission denied | Exact API operation and product | Grant only the current documented minimum. Do not switch to broad administrator access as a diagnostic. |
 | Product/binding unavailable | Account entitlement for Workers, KV, R2, Browser Rendering, Dynamic Worker Loaders, or enabled AI | Enable/obtain the product or revise the approved design. |
 | Worker already exists | Remote owner and deployment history | Continue only if it is the known deployment identity; otherwise choose another name. |
-| Secret required during Workshop deploy | AI enabled before secret bootstrap | Stop, inventory partial deploy, then use the approved bootstrap/recovery plan. |
+| Secret required during Workshop deploy | Whether `providers` includes `google` or `aiGateway.accountId` names another account | Only those two require a token. Either install it interactively on the exact Workshop identity, or revise the configuration back onto the binding transport. |
 | `secret put` targets the wrong account/Worker | Missing account selector or unproven Worker ownership | Stop. It already deploys a version; inventory the mutation, contain if needed, and use an account-bound approved correction. |
 
 ## Routing, DNS, TLS, And Access
@@ -118,7 +125,11 @@ Use an incognito session after config correction. Do not bypass Access to prove 
 
 ### Evaluation route is unexpectedly public
 
-`workersDev: true` creates a route; it does not configure Access. Protect the exact `workers.dev` hostname. Inspect Preview URL defaults in the current Wrangler docs and derived config. Disable Preview URLs in wrapper source, or protect and verify them explicitly; never patch the generated config.
+`workersDev: true` creates a route; it does not configure Access. Protect the exact `workers.dev` hostname the Router answers on with its own Access application.
+
+`scripts/deploy.ts` writes `preview_urls: false` on all Workers other than the router worker, because a Preview URL is an unauthenticated path around the Access-protected origin. Verify that in the derived config rather than assuming it, check the current Wrangler docs for changed defaults, and never patch the generated config to alter one.
+
+If a Worker other than the Router is publicly reachable, that is an Access bypass, not a routing nicety: the derived config gives the other five `workers_dev: false` and no routes, so an unexpected route means something outside this deploy created it.
 
 ## Storage And Missing Data
 
@@ -134,6 +145,18 @@ Treat missing data as a possible wrong binding, not an invitation to create stor
 
 Never copy, merge, delete, or adopt production data automatically. A Worker rename combined with automatic provisioning is a prime suspect when the application appears empty.
 
+### Context collections are missing but the KV namespace is right
+
+Suspect the sharing boundary before the storage. The Workshop's `GATEKEEPER_CONTEXT` binding carries a `sharingDomain` prop, and collections are visible only within it. `context.sharingDomain: null` derives it from the public origin, so a changed hostname silently changes the boundary while every KV binding stays correct.
+
+Compare the deployed binding's prop against the value the collections were written under, and restore it by pinning that exact literal. Do not re-provision the namespace, and do not treat the collections as lost: nothing was deleted.
+
+### Schedules are missing
+
+Suspect the Worker identity, and nothing else. The Scheduler keeps everything in Durable Objects belonging to its own script identity, with no KV, R2 or sharing-boundary prop involved, so a changed `workers.scheduler.name` is the only ordinary way its schedules disappear: the new script starts with empty DO namespaces while the old one keeps running with the data, bound to nothing.
+
+Compare the deployed `GATEKEEPER_SCHEDULER` binding on the Workshop and the Router against the previously deployed Scheduler Worker name, and restore that name. Nothing was deleted; do not delete the old Worker until the binding is proven.
+
 ### Automatic provisioning denied
 
 Verify the exact required permission and product availability. If reproducible production binding is needed after provisioning succeeds, inventory the resulting resource IDs/names and plan an explicit binding update. Do not treat temporary generated Wrangler files as the durable inventory.
@@ -146,7 +169,8 @@ Verify the exact required permission and product availability. If reproducible p
 | 401/403 during inference | Token account and current required scopes | Correct least privilege; do not print or replace the token in chat. |
 | Gateway not found | Gateway name/account and direct vs gateway mode | Correct configuration after ownership review. |
 | Provider authorization/billing error | Unified Billing/BYOK/provider setup | Complete provider setup or disable that provider. |
-| Workers AI direct still asks for token | Current upstream transport | Confirm docs and checkout; the starter may call the REST transport even in direct mode. |
+| Model picker is empty | `aiGateway.enabled`, and whether the deployed Workshop actually carries `CF_AI_GATEWAY*` vars | Most often a migration from the hosted deploy left `aiGateway` disabled: `wrangler deploy` replaces `vars` wholesale, so the hosted values are gone and `getAiGatewayConfig()` returns null. Enable it and point `name` at the instance's own gateway. See `docs/migrate-from-hosted.md`. |
+| Deploy demands a token unexpectedly | `aiGateway.accountId` and whether `google` is in `providers` | Those are the only two configurations that need `CF_AI_GATEWAY_API_TOKEN`. `accountId: null` and no `google` uses the pre-authenticated `WORKERS_AI` binding instead. |
 | Unexpected logs contain prompts | Gateway/logging configuration and export | Stop sensitive traffic, disable collection where supported, review exposure and retention. |
 | Unexpected cost or rate limit | Billing account, provider, model, retries, alerts | Disable funded models if needed, preserve usage evidence, and require cost review. |
 
@@ -181,7 +205,9 @@ The Reporter must have no public route. Its events remain visible to authorized 
 
 ## Partial Deployment
 
-The baseline sequence is Error Reporter, Context, Custom Gatekeeper, then Workshop. Re-read `scripts/deploy.mjs` for the current sequence.
+The baseline sequence is Error Reporter, Context, Scheduler, Custom Gatekeeper, Workshop, then Router. Re-read `scripts/deploy.ts` for the current sequence.
+
+The Router is last because it binds every other Worker, which shapes recovery: a failure before it leaves the previous Router version serving the public URL against a partly-updated set of backends, so the live site can look healthy while the stack is mixed. A failure *of* the Router leaves the site on its previous version with new backends behind it.
 
 When deployment stops:
 
@@ -201,7 +227,7 @@ For breaking contracts, do not alternate old/new code under the same service nam
 
 Likely causes after a gitlink update:
 
-- An upstream Wrangler base-config field is overwritten by `scripts/deploy.mjs`.
+- An upstream Wrangler base-config field is overwritten by `scripts/deploy.ts`.
 - Shared RPC or Gatekeeper interfaces changed.
 - Durable Object migrations/classes changed.
 - Storage schema changed.

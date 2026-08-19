@@ -3,25 +3,42 @@
   // Find it: https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/
   "accountId": "<CLOUDFLARE_ACCOUNT_ID>",
 
+  // The deployment's public origin, used for PUBLIC_BASE_URL and to scope Context data.
+  // null derives it from workers.router.route.customDomain.
+  // Required when the router uses workersDev: the account's workers.dev subdomain is not
+  // knowable from this file. Write it as a bare origin, no path and no trailing slash --
+  // "https://<router-name>.<subdomain>.workers.dev".
+  "publicBaseUrl": null,
+
   // Worker names are permanent service identities. Keep them unique within the account.
   // Reference: docs/customization.md#workers-and-routing
   "workers": {
-    "workshop": {
-      "name": "<WORKSHOP_WORKER_NAME>",
+    // Owns the public URL and serves the frontend. Proxies /api and /blueprint-screenshot to the
+    // Workshop, and /gatekeeper/<name> to the matching Gatekeeper.
+    "router": {
+      "name": "<ROUTER_WORKER_NAME>",
 
       // Production: use a hostname in an active Cloudflare zone. Wrangler creates DNS and TLS.
-      // Evaluation: replace this with "route": { "workersDev": true }.
+      // Evaluation: replace this with "route": { "workersDev": true } and set publicBaseUrl above.
       // https://developers.cloudflare.com/workers/configuration/routing/custom-domains/
       "route": { "customDomain": "os.example.com" }
     },
+
+    // The Workshop backend. No public route: the router reaches it over a service binding.
+    "workshop": { "name": "<WORKSHOP_WORKER_NAME>" },
     "context": { "name": "<CONTEXT_WORKER_NAME>" },
+
+    // The Scheduler Gatekeeper, which gives agents scheduled and recurring work. Ambient like
+    // the Context Gatekeeper
+    "scheduler": { "name": "<SCHEDULER_WORKER_NAME>" },
+
     "customGatekeeper": { "name": "<CUSTOM_GATEKEEPER_WORKER_NAME>" },
     "errorReporter": { "name": "<ERROR_REPORTER_WORKER_NAME>" }
   },
 
   // This starter deploys Cloudflare Access mode. Cloudflare OS also supports built-in password
   // accounts and auth Gatekeeper sign-in; see the reference below before switching. The audience
-  // comes from the self-hosted Access application protecting the Workshop hostname.
+  // comes from the self-hosted Access application protecting the public hostname.
   // "admins" gates /admin in every sign-in method.
   // Reference: docs/customization.md#sign-in-methods
   "access": {
@@ -30,22 +47,31 @@
     "admins": ["<ADMIN_EMAIL>"]
   },
 
-  // Optional platform-funded model catalog. Leave disabled to deploy without AI setup.
-  // When enabled, replace every placeholder and install CF_AI_GATEWAY_API_TOKEN separately.
+  // Model catalog served through Cloudflare AI Gateway. Enabled by default: the Workshop reaches
+  // the gateway over its WORKERS_AI binding, which is pre-authenticated inside your own account,
+  // so no API token is needed.
   // Reference: docs/customization.md#ai-models
   "aiGateway": {
-    "enabled": false,
-    "name": "<AI_GATEWAY_NAME>",
-    "accountId": "<AI_GATEWAY_ACCOUNT_ID>",
-    "providers": ["anthropic", "openai", "google", "cloudflare"],
+    "enabled": true,
 
-    // "direct" sends Workers AI to its REST endpoint. "gateway" adds AI Gateway logs.
-    "workersAi": { "mode": "gateway", "gateway": "<WORKERS_AI_GATEWAY_NAME>" }
+    // Your account's AI Gateway. "default" is the one Cloudflare creates for the account.
+    // Migrating from the hosted deploy? Use the gateway that flow created: "<instance>-ai"
+    // (e.g. "cloudflareos-ai"), named after your instance. See docs/migrate-from-hosted.md.
+    "name": "default",
+
+    // null reuses the top-level accountId. Set only if the gateway lives in another account --
+    // that requires CF_AI_GATEWAY_API_TOKEN, since the binding cannot reach across accounts.
+    "accountId": null,
+
+    // "cloudflare" is Workers AI, which needs no key of your own. anthropic/openai need keys
+    // stored on the gateway; "google" additionally requires CF_AI_GATEWAY_API_TOKEN.
+    "providers": ["cloudflare"]
   },
 
   "context": {
     // Isolates Context data shared by this Workshop deployment.
-    "sharingDomain": "production",
+    // null scopes it to the public origin
+    "sharingDomain": null,
 
     // null: Wrangler provisions and remembers a KV namespace on first deploy.
     // string: bind an existing namespace by ID.

@@ -15,11 +15,13 @@ This skill operates the deployment wrapper, not Cloudflare OS in isolation. The 
 Find the repository root containing all of these markers:
 
 - `deployment.jsonc`
-- `scripts/deploy.mjs`
+- `scripts/deploy.ts`
 - `cloudflare-os/`
 - `packages/custom-gatekeeper/`
 
 Do not assume the current working directory or this skill's directory is the starter root. If the markers are absent, stop and ask for the starter checkout. Do not apply this workflow directly to a standalone Cloudflare OS checkout.
+
+Once the submodule is initialized, confirm `cloudflare-os/packages/router/` exists as well. The deploy binds and deploys it, so a pinned commit without it cannot be deployed by this wrapper; treat its absence as a provenance problem, not a missing build step.
 
 ## Read Current Sources First
 
@@ -27,7 +29,7 @@ Before any mutation, always read the current checkout's:
 
 1. `README.md`
 2. `deployment.jsonc`
-3. `scripts/deploy.mjs`
+3. `scripts/deploy.ts`
 4. `package.json`
 5. `.gitmodules`
 6. Available relevant upstream files under `cloudflare-os/`
@@ -94,7 +96,7 @@ Require explicit operator approval before changing any of these:
 
 - Cloudflare account, Worker identity, route, DNS, or Access application.
 - Access issuer, audience, sign-in method, policy, administrator list, or allowed population.
-- Existing KV/R2 bindings, `context.sharingDomain`, data ownership, or service bindings.
+- Existing KV/R2 bindings, `publicBaseUrl`, `context.sharingDomain`, data ownership, or service bindings. The public origin is a data boundary as well as an address: `context.sharingDomain: null` derives from it, so moving the hostname moves the Context isolation boundary with it.
 - AI provider, billing, token scope, model logging, retention, or external observability export.
 - Gatekeeper authority, OAuth scopes, writes, observer policy, auto-provisioning, or ambience.
 - Reporter visibility, browser reporting, retention, or destination.
@@ -132,10 +134,10 @@ expected submodule gitlink:
 checked-out submodule commit and status:
 Node, pnpm, and Wrangler versions:
 Wrangler authentication source and target account:
-route and hostname:
+route, hostname, and resolved public origin:
 Worker names and whether each is new, owned, or conflicting:
 storage choice and ownership for each binding:
-AI mode:
+AI Gateway name, providers, and whether a token is required:
 error-reporting mode:
 custom Gatekeeper provenance and intended policy:
 last-known-good deployment/version IDs:
@@ -157,20 +159,20 @@ Inventory remote Worker-name and route collisions. A syntactically valid Worker 
 
 Ask once for any decisions not established by existing approved configuration:
 
-1. Evaluation or production, target account, exact hostname, and zone for a custom domain.
+1. Evaluation or production, target account, exact hostname, and zone for a custom domain. On a `workers.dev` route, also the exact `publicBaseUrl` origin, which the operator has to supply because nothing in the checkout can derive it.
 2. Access application, intended users, identity provider requirements, administrators, and denied test identity.
-3. Stable names for Workshop, Context, Custom Gatekeeper, and Error Reporter.
+3. Stable names for the Router, Workshop, Context, Scheduler, Custom Gatekeeper, and Error Reporter. Only the Router's name appears in the public URL; the Workshop's is the identity every Durable Object belongs to, and Context and Scheduler own Durable Objects of their own — collections and schedules — so renaming either strands its data.
 4. New auto-provisioned or existing resource for each of Context KV, Blueprints KV, Avatars KV, and Blueprint Content R2.
-5. AI disabled, Workers AI direct, or AI Gateway; providers, billing, budget, prompt/response logging, and retention.
+5. Which AI Gateway and which providers; billing/BYOK on the gateway, budget, prompt/response logging, and retention. Disabling `aiGateway` at all is the exception, not the default.
 6. Error Reporter enabled state, environment/release metadata, telemetry sampling, and retention/export policy.
 7. Custom Gatekeeper disabled, optional, or enabled, and whether its code still matches the low-stakes example.
 8. Rollback tolerance and the person authorized to approve production mutation.
 
-Default recommendations for a first evaluation are AI disabled, Context Artifacts disabled, new storage, Error Reporter enabled and private, Custom Gatekeeper disabled until reviewed, narrow Access policy, and operators-only access until verification completes. Do not ask first-time operators about Context Artifacts; discuss it only when the existing configuration enables it or the operator explicitly requests Git-backed Context collections.
+Default recommendations for a first evaluation are the default AI configuration (enabled, the account's own gateway, `cloudflare` only, no token), Context Artifacts disabled, new storage, Error Reporter enabled and private, Custom Gatekeeper disabled until reviewed, narrow Access policy, and operators-only access until verification completes. Do not ask first-time operators about Context Artifacts; discuss it only when the existing configuration enables it or the operator explicitly requests Git-backed Context collections.
 
 ### 3. Prepare The Workspace
 
-Require Node.js major 24 and pnpm major 11 unless the current repository says otherwise. Confirm account access to every enabled product, including Workers, KV, R2, Browser Rendering, Dynamic Worker Loaders, and optional AI or Artifacts products.
+Require Node.js major 24 and pnpm major 11 unless the current repository says otherwise. Confirm account access to every enabled product, including Workers, KV, R2, Browser Rendering, and Dynamic Worker Loaders. Workers AI and AI Gateway belong on that list unless the operator has deliberately disabled the model catalog, since it is enabled by default. Artifacts is optional.
 
 Run the repository's documented setup commands. Stop if installation unexpectedly changes lockfiles, the submodule gitlink, or tracked files. Resolve provenance or version drift; do not normalize it away.
 
@@ -179,6 +181,8 @@ Temporary `wrangler.prod.jsonc` files are generated implementation details. Neve
 ### 4. Configure Cloudflare Access And Routing
 
 Treat routing, authentication, and `/admin` authorization as separate controls.
+
+The route belongs to the Router alone. The other five Workers are generated with `workers_dev: false`, no routes, and Preview URLs off, so the Router's hostname is the single Access-protected entrance. Verify that in the generated configs rather than assuming it, and treat any additional public route on a backend Worker as an Access bypass.
 
 For production:
 
@@ -189,9 +193,9 @@ For production:
 5. Copy the exact HTTPS team-origin issuer and exact application audience tag.
 6. Make administrators an explicit subset of users allowed by Access.
 
-For evaluation, using `workersDev: true` does not itself add authentication. Protect the exact evaluation hostname with Access and use that application's audience. Inspect current Wrangler defaults and the generated config for Preview URLs; disable them in wrapper source or protect and test them explicitly. Never patch the generated file.
+For evaluation, using `workersDev: true` does not itself add authentication. Protect the exact evaluation hostname with Access and use that application's audience. `publicBaseUrl` must name that same hostname: it is what `PUBLIC_BASE_URL` and the Context sharing boundary derive from, and the deploy refuses a `workers.dev` route without it. Confirm Preview URLs are off in every generated config, and never patch a generated file to change one.
 
-For a first `workers.dev` deployment, determine whether the Access application can be created for the predictable hostname before the Worker exists. If the platform requires the Worker first, present a controlled two-stage bootstrap for approval: pre-create only a reserved Workshop Worker identity with no sensitive application or data, enable Access and obtain its audience, then configure and run the wrapper deployment. Do not use `pnpm deploy` for the identity bootstrap because it deploys the whole stack. Record and minimize any temporary public route, and do not proceed if the bootstrap cannot be contained.
+For a first `workers.dev` deployment, determine whether the Access application can be created for the predictable hostname before the Worker exists. If it requires the Worker first, present a controlled two-stage bootstrap for approval: pre-create only a reserved Router Worker identity with no sensitive application or data, enable Access and obtain its audience, then configure and run the wrapper deployment. Do not use `pnpm deploy` for the identity bootstrap because it deploys the whole stack. Record and minimize any temporary public route, and do not proceed if the bootstrap cannot be contained.
 
 Initially allow only deployment operators. Widen access only after `/admin` policy and all post-deploy checks pass.
 
@@ -203,10 +207,11 @@ Edit only the annotated, non-secret control surface unless the requested feature
 
 - Account IDs are exact 32-character hexadecimal IDs.
 - Active Worker names are unique, stable, lowercase account-level service identities.
-- Set exactly one Workshop route: `customDomain` or `workersDev: true`.
+- Set exactly one Router route: `customDomain` or `workersDev: true`. No other Worker takes a route.
+- `publicBaseUrl` is an HTTPS origin with no path and no trailing slash, `null` only on a custom domain, and must agree with `customDomain` when both are set.
 - The Access issuer is an HTTPS origin without a path; the audience is exact and unpadded.
 - Administrator emails must match the verified identity representation expected by the current backend.
-- Keep `context.sharingDomain` stable unless intentionally creating a new data-isolation boundary.
+- Keep the Context data-isolation boundary stable unless intentionally creating a new one. `context.sharingDomain: null` follows the public origin, so a hostname change moves the boundary; pin the old origin as a literal string to hold it in place.
 - Context Artifacts defaults to disabled when `enabled` is omitted; when enabled, keep its namespace stable. Omitting the namespace selects `gatekeeper-context-collections`, while `null` is invalid.
 - `customGatekeeper.message` is tracked and agent-readable. It is not a secret store.
 - Set release metadata only to a real deployment identifier; use `null` otherwise.
@@ -219,20 +224,22 @@ Context Artifacts is separate from those KV/R2 resources. Enabling it creates th
 
 After first production provisioning, inventory the actual resource identities. Consider pinning explicit IDs/names when reproducible binding is required. Treat Worker renames as migration work because they can create new service identities, provision empty resources, or orphan old mappings.
 
-### 6. Configure Optional AI
+### 6. Configure AI
 
-Keep `aiGateway.enabled` false unless a deployment-funded model catalog is required.
+`aiGateway.enabled` defaults to true, and that is normally the right setting. Every provider, Workers AI included, is reached through AI Gateway over the Workshop's `WORKERS_AI` binding, which is pre-authenticated inside the deployment's own account. The common configuration needs **no `CF_AI_GATEWAY_API_TOKEN`**, so there is no token bootstrap to sequence.
 
-Before enabling AI:
+Disabling it is a deliberate choice with a consequence: every user must then supply their own model API keys, and a deployment migrated from the hosted flow shows an empty model picker because `wrangler deploy` replaces `vars` wholesale and drops the hosted `CF_AI_GATEWAY*` values. Confirm the operator wants that before setting it false.
 
-1. Reconcile the current upstream model transport with current Cloudflare docs.
-2. Choose direct Workers AI or Gateway routing, providers, billing/BYOK, budget, and alerts.
-3. Review least-privilege token permissions and account scope.
-4. Decide whether prompts/responses are logged, where, for how long, and who can access them.
-5. Confirm the AI account ID intentionally differs from or matches the Worker account.
-6. Install the required secret interactively without exposing its value.
+Decisions to confirm:
 
-For a new deployment, avoid discovering a missing secret after downstream Workers have deployed. Prefer a reviewed bootstrap with an approval at each mutation boundary: deploy with AI disabled; verify the live Access, bindings, and provisioned resource identities; install the secret on the existing exact Workshop identity and record the version it deploys; enable AI; run `pnpm check`; approve; and redeploy. The first mutation summary records automatic-provisioning intent, then the operation record adds actual resource identities before the next phase.
+1. Which gateway. `default` is created on first use; a migration from the hosted deploy must reuse `<instance>-ai` (see `docs/migrate-from-hosted.md`).
+2. Which providers, and for `anthropic`/`openai` the billing/BYOK setup and budget on the gateway itself.
+3. Whether prompts/responses are logged, where, for how long, and who can access them.
+4. Whether `aiGateway.accountId` should stay `null`. A different account is the deploy's way of saying the gateway is out of the binding's reach, and it turns the token back on.
+
+Only two configurations still require the token, and `pnpm check` names whichever applies before deploying: the `google` provider, whose adapter refuses the binding's fetch, and a gateway in another account. In exactly those cases the generated config declares the secret as required, so wrangler refuses the deploy without it — install it interactively on the exact Workshop identity, after confirming account and Worker ownership, and record the version it deploys.
+
+Never remove the `WORKERS_AI` binding to opt out of gateway transport. It is also what the agent's `webFetch` document-to-Markdown conversion runs on. The supported opt-out is `aiGateway.accountId`, which the deploy translates into `CF_AI_GATEWAY_USE_BINDING: "false"`.
 
 A secret existing does not prove its scope, billing, or account is correct. One approved, non-sensitive, low-cost request proves only the runtime inference path. Verify token configuration, billing ownership, Gateway/provider logs, prompt collection, retention, and access policy through their authoritative control surfaces. Disabling AI does not delete an existing secret.
 
@@ -278,10 +285,12 @@ Before requesting approval, inventory current deployed version IDs for all affec
 
 1. Error Reporter, when enabled.
 2. Context.
-3. Custom Gatekeeper.
-4. Workshop.
+3. Scheduler.
+4. Custom Gatekeeper.
+5. Workshop.
+6. Router, which binds every one of the above.
 
-If current `scripts/deploy.mjs` differs, use its order. Breaking cross-Worker contracts need parallel identities and a controlled binding switch, not an in-place sequential deploy.
+If current `scripts/deploy.ts` differs, use its order. The Router going last means a failure before it leaves the previous Router version still serving the public URL over partly-updated backends, so a healthy-looking site is not evidence the deploy completed. Breaking cross-Worker contracts need parallel identities and a controlled binding switch, not an in-place sequential deploy.
 
 Present the production mutation summary from the hard stop. After explicit approval, run:
 
@@ -295,17 +304,19 @@ Record each successful stage and resulting deployment/version ID. On the first f
 
 Success requires evidence for every applicable item:
 
-- The intended hostname serves valid TLS and is the only intended public route.
+- The intended hostname serves valid TLS on the Router and is the only intended public route.
+- The Router proxies correctly: the frontend loads, `/api` reaches the Workshop, and a Gatekeeper that serves HTTP answers under `/gatekeeper/<name>`.
 - Access redirects/denies unauthenticated users, allows the intended identity, and denies the negative test identity.
 - `/admin` allows an administrator and denies an authenticated non-administrator.
 - Signup, connector, Context, and Gatekeeper policies match the approved decisions.
-- Context, Custom Gatekeeper, and Error Reporter have no unintended public routes.
+- Workshop, Context, Scheduler, Custom Gatekeeper, and Error Reporter have no public routes and no Preview URLs. Each would be an unauthenticated path around the Router's Access application.
 - Existing data remains visible; newly created data persists across a safe reload or redeploy test.
 - Context Artifacts is absent when disabled, or an approved Git-backed collection can be populated and refreshed in the intended stable namespace when enabled.
-- Each Workshop service binding targets the intended service, entrypoint, and props.
+- Each Workshop service binding targets the intended service, entrypoint, and props, and each Router service binding targets the intended service with no entrypoint. The Context binding's `sharingDomain` prop matches the boundary the existing collections live under.
 - The Custom Gatekeeper is disabled or behaves according to its reviewed policy; approved reads appear as observations.
-- AI is intentionally disabled or one approved low-cost request proves the runtime path, with separate evidence for token scope, billing ownership, provider/Gateway selection, prompt collection, retention, and log access.
-- Workshop, Context, Custom Gatekeeper, and Reporter logs are available with the expected sampling.
+- The model picker lists the configured providers' models, and one approved low-cost request proves the runtime path, with separate evidence for billing ownership, provider/Gateway selection, prompt collection, retention, and log access, plus token scope where a token is required. An empty picker is a failure, not an absence of evidence: see `references/troubleshooting.md`.
+- Existing schedules are still listed and a newly created one fires. Both come from the Scheduler's own Durable Objects, so an empty list on an upgraded or migrated deployment points at its Worker name, not at its storage.
+- Router, Workshop, Context, Scheduler, Custom Gatekeeper, and Reporter logs are available with the expected sampling.
 - The Reporter query surface exists; absence of events is not a failure without an explicit capture.
 - No secrets or generated Wrangler files are tracked.
 - Last-known-good deployment IDs and recovery instructions are recorded.
