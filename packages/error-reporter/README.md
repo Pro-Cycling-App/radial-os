@@ -42,7 +42,7 @@ See [Observability and error reporting](../../docs/observability.md) for deploym
 ## Check
 
 ```sh
-pnpm test
+pnpm run test:run
 pnpm run types:check
 pnpm exec wrangler deploy --dry-run
 ```
