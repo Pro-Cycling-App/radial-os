@@ -6,10 +6,12 @@
   "main": "./src/index.ts",
   "scripts": {
     "types:check": "tsc --noEmit",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "types:code": "./gen-types-code.sh"
   },
   "dependencies": {
     "@gadgets/workshop-shared": "workspace:*",
+    "@neondatabase/serverless": "1.1.0",
     "capnweb": "catalog:",
     "capnweb-validate": "catalog:"
   },

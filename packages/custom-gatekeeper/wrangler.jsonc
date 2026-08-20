@@ -14,6 +14,9 @@
       "new_sqlite_classes": ["CustomGatekeeper"]
     }
   ],
+  // DATABASE_URL: the radial_os connection string (read-only pooler). Installed as a Worker secret
+  // by the deploy, never written here.
+  "secrets": { "required": ["DATABASE_URL"] },
   "vars": {
     "CUSTOM_NAME": "Example organization",
     "CUSTOM_MESSAGE": "Replace this with information useful to your organization."

@@ -1,3 +1,11 @@
+// The Radial gatekeeper: read-only access to the Radial production database for agents and
+// gadgets, plus the operator's description of the deployment.
+//
+// The exported class names (`CustomGatekeeper`, `CustomAccount`, `CustomVerifier`,
+// `CustomSessionImpl`) are the starter's and stay as they are: the Workshop stores stubs to the
+// account and the singleton class irrevocably (`allow_irrevocable_stub_storage`), so a rename would
+// orphan every user's existing connection. Everything a person or an agent sees says Radial.
+
 import {
   DurableObject,
   RpcStub,
@@ -18,57 +26,110 @@ import type {
   SupportedResource,
   VendorDescription,
 } from "@gadgets/workshop-shared/gatekeeper";
-import type { CustomDeploymentInfo, CustomSession } from "./types.js";
+import { RadialDb } from "./radial-db.js";
+import type {
+  RadialDeploymentInfo,
+  RadialQueryResult,
+  RadialSession,
+  RadialSqlValue,
+  RadialTable,
+  RadialTableColumn,
+} from "./types.js";
 import TYPES_CODE from "./types-code.js";
 
-const CUSTOM_ICON = {
+const RADIAL_ICON = {
   url:
     "data:image/svg+xml," +
     encodeURIComponent(
-      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='currentColor' stroke-width='20'><path d='M52 72h152v112H52z'/><path d='m52 88 76 52 76-52'/></svg>",
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='currentColor' stroke-width='18'><circle cx='128' cy='128' r='96'/><circle cx='128' cy='128' r='14'/><path d='M128 32v82M128 142v82M32 128h82M142 128h82M60 60l58 58M138 138l58 58M196 60l-58 58M118 138l-58 58'/></svg>",
     ),
 };
 
 type ObservationQueue = Pick<ApprovalQueue, "authorizeObservation"> &
   Partial<{ [Symbol.dispose](): void }>;
 
-export function describeCustomVendor(): VendorDescription {
+/** The database reads a session needs; `RadialDb` in production, a stub in tests. */
+export type RadialReader = Pick<RadialDb, "query" | "listTables" | "describeTable">;
+
+export function describeRadialVendor(): VendorDescription {
   return {
-    displayName: "Custom Gatekeeper",
-    url: "https://github.com/cloudflare/cloudflare-os-starter",
-    logo: CUSTOM_ICON,
-    color: "#e8f2ff",
-    tagline: "Example organization-specific capability",
+    displayName: "Radial",
+    url: "https://radial.racing",
+    logo: RADIAL_ICON,
+    color: "#fff1e6",
+    tagline: "Read-only access to the Radial database",
     description:
-      "A minimal Gatekeeper to copy when connecting CloudflareOS to your organization's systems.",
+      "Query the Radial production database (races, riders, teams, results, images, provenance) " +
+      "with read-only SQL. Every read is recorded; nothing can be written.",
     autoProvisionsAccount: true,
     providesAuth: false,
   };
 }
 
-export function describeCustomAccount(): AccountDescription {
+export function describeRadialAccount(): AccountDescription {
   return {
-    displayName: "Custom Gatekeeper",
-    avatar: CUSTOM_ICON,
-    singleton: { tsType: "CustomSession" },
+    displayName: "Radial",
+    avatar: RADIAL_ICON,
+    singleton: { tsType: "RadialSession" },
   };
 }
 
-@validateRpc()
-export class CustomSessionImpl extends RpcTarget implements CustomSession {
-  readonly #approvalQueue: ObservationQueue;
-  readonly #info: CustomDeploymentInfo;
+// An observation description shows the approver what was read. For SQL that is the statement
+// itself; parameters are included so a parameterized query is as reviewable as an inlined one.
+function describeQuery(sql: string, params: RadialSqlValue[] | undefined, rowCount: number): string {
+  const paramsLine = params && params.length > 0
+    ? `\n\nParameters: \`${JSON.stringify(params)}\``
+    : "";
+  return `Ran a read-only query against the Radial database (${rowCount} row${rowCount === 1 ? "" : "s"}).` +
+    "\n\n```sql\n" + sql + "\n```" + paramsLine;
+}
 
-  constructor(approvalQueue: ObservationQueue, info: CustomDeploymentInfo) {
+@validateRpc()
+export class CustomSessionImpl extends RpcTarget implements RadialSession {
+  readonly #approvalQueue: ObservationQueue;
+  readonly #db: RadialReader;
+  readonly #info: RadialDeploymentInfo;
+
+  constructor(approvalQueue: ObservationQueue, db: RadialReader, info: RadialDeploymentInfo) {
     super();
     this.#approvalQueue = approvalQueue;
+    this.#db = db;
     this.#info = info;
   }
 
-  async getDeploymentInfo(): Promise<CustomDeploymentInfo> {
+  async query(sql: string, params?: RadialSqlValue[]): Promise<RadialQueryResult> {
+    // Fetch first, then authorize: the observation can then say how much was read, and nothing is
+    // returned to the caller until the queue has allowed it.
+    const result = await this.#db.query(sql, params);
+    await this.#approvalQueue.authorizeObservation({
+      title: "Run read-only SQL on the Radial database",
+      description: describeQuery(sql, params, result.rowCount),
+    });
+    return result;
+  }
+
+  async listTables(): Promise<RadialTable[]> {
+    const tables = await this.#db.listTables();
+    await this.#approvalQueue.authorizeObservation({
+      title: "List Radial database tables",
+      description: `Listed the ${tables.length} tables and views in the Radial database.`,
+    });
+    return tables;
+  }
+
+  async describeTable(name: string): Promise<RadialTableColumn[]> {
+    const columns = await this.#db.describeTable(name);
+    await this.#approvalQueue.authorizeObservation({
+      title: "Describe a Radial database table",
+      description: `Read the ${columns.length} columns of \`public.${name}\`.`,
+    });
+    return columns;
+  }
+
+  async getDeploymentInfo(): Promise<RadialDeploymentInfo> {
     await this.#approvalQueue.authorizeObservation({
       title: "Read deployment information",
-      description: "Read the custom information configured by this deployment.",
+      description: "Read the description of this Radial OS deployment.",
     });
     return this.#info;
   }
@@ -79,14 +140,14 @@ export class CustomSessionImpl extends RpcTarget implements CustomSession {
 }
 
 @validateRpc()
-export class CustomGatekeeper extends DurableObject<Cloudflare.Env> implements Gatekeeper<CustomSession> {
+export class CustomGatekeeper extends DurableObject<Cloudflare.Env> implements Gatekeeper<RadialSession> {
   async describe(): Promise<ResourceDescription> {
     return {
-      url: "custom://deployment-info",
-      title: "Deployment information",
-      snippet: "Organization-specific information supplied by this deployment.",
-      suggestedBindingName: "CUSTOM",
-      tsType: "CustomSession",
+      url: "radial://database",
+      title: "Radial database (read-only)",
+      snippet: "Read-only SQL over the Radial production database: races, riders, teams, results, images, provenance.",
+      suggestedBindingName: "RADIAL",
+      tsType: "RadialSession",
     };
   }
 
@@ -98,34 +159,36 @@ export class CustomGatekeeper extends DurableObject<Cloudflare.Env> implements G
     return [];
   }
 
-  async startSession(approvalQueue: RpcStub<ApprovalQueue>): Promise<CustomSession> {
-    return new CustomSessionImpl(approvalQueue.dup(), {
+  async startSession(approvalQueue: RpcStub<ApprovalQueue>): Promise<RadialSession> {
+    return new CustomSessionImpl(approvalQueue.dup(), new RadialDb(this.env.DATABASE_URL), {
       name: this.env.CUSTOM_NAME,
       message: this.env.CUSTOM_MESSAGE,
     });
   }
 
+  // Every signed-in user of this deployment may read the same data (the role is SELECT-only and
+  // Access admits only the team), so every observer is admitted. See README.md#observer-policy.
   async addObserver(_id: string, _user: Fetcher<GatekeeperUserVerifier>): Promise<void> {}
   async removeObserver(_id: string): Promise<void> {}
 
   async applyAction(action: number): Promise<void> {
-    throw new Error(`Custom Gatekeeper has no actions (${action}).`);
+    throw new Error(`The Radial gatekeeper has no actions (${action}).`);
   }
 
   async rejectAction(_action: number): Promise<void> {}
 
   async revertAction(_action: number): Promise<void> {
-    throw new Error("Custom Gatekeeper has no actions to revert.");
+    throw new Error("The Radial gatekeeper has no actions to revert.");
   }
 }
 
 @validateRpc()
 export class CustomAccount extends WorkerEntrypoint<Cloudflare.Env> implements GatekeeperUser {
   async describe(): Promise<AccountDescription> {
-    return describeCustomAccount();
+    return describeRadialAccount();
   }
 
-  async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<CustomSession>>> {
+  async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<RadialSession>>> {
     return this.ctx.exports.CustomGatekeeper({});
   }
 
@@ -134,11 +197,11 @@ export class CustomAccount extends WorkerEntrypoint<Cloudflare.Env> implements G
   }
 
   getGatekeeperClassFor(_url: string): never {
-    throw new Error("Custom Gatekeeper has no URL-addressed resources.");
+    throw new Error("The Radial gatekeeper has no URL-addressed resources.");
   }
 
   startResourceConfigurator(_resourceUrlPattern: string): Promise<ResourceConfiguratorFrame> {
-    throw new Error("Custom Gatekeeper has no URL-addressed resources.");
+    throw new Error("The Radial gatekeeper has no URL-addressed resources.");
   }
 
   async ensureResources(_resourceUrlPatterns: string[]): Promise<{ url?: string }> {
@@ -148,7 +211,7 @@ export class CustomAccount extends WorkerEntrypoint<Cloudflare.Env> implements G
   async revoke(): Promise<void> {}
 
   reconnect(): Promise<{ url: string }> {
-    throw new Error("Custom Gatekeeper has no credentials to reconnect.");
+    throw new Error("The Radial gatekeeper has no credentials to reconnect.");
   }
 
   async getAuthenticatedEmail(): Promise<string | null> {
@@ -169,7 +232,7 @@ export class CustomVerifier extends WorkerEntrypoint<Cloudflare.Env> implements 
 @validateRpc()
 export class GatekeeperVendor extends WorkerEntrypoint<Cloudflare.Env> {
   async describe(): Promise<VendorDescription> {
-    return describeCustomVendor();
+    return describeRadialVendor();
   }
 
   @skipRpcValidation()
@@ -181,7 +244,7 @@ export class GatekeeperVendor extends WorkerEntrypoint<Cloudflare.Env> {
     _callback: Fetcher<GatekeeperConnectCallback>,
     _options?: GatekeeperConnectOptions,
   ): Promise<{ url: string }> {
-    throw new Error("Custom Gatekeeper is auto-provisioned and has no connect flow.");
+    throw new Error("The Radial gatekeeper is auto-provisioned and has no connect flow.");
   }
 
   async getSupportedResources(_options?: { userId?: string }): Promise<SupportedResource[]> {
