@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="940" height="500" viewBox="0 0 940 500" role="img" aria-labelledby="title desc">
   <title id="title">Cloudflare OS deployment architecture</title>
-  <desc id="desc">Users sign in through the deployment's configured authentication method and reach the pinned Cloudflare OS release, which contains the Workshop kernel, Gadgets, Blueprints, and the default Gatekeepers including Context. Service bindings connect it to the Workers this repository owns and deploys: an optional AI Gateway, any number of custom Gatekeepers, the Error Reporter, and KV and R2 storage.</desc>
+  <desc id="desc">Users reach the deployment through one public route, owned by the Router Worker. The Router serves the Workshop frontend, sends /api to the Workshop backend, and sends /gatekeeper/&lt;name&gt; to whichever Gatekeeper the binding name matches. Behind it is the pinned Cloudflare OS release, containing the Workshop kernel, Gadgets, Blueprints, and the default Gatekeepers including Context. Service bindings connect that to the Workers and resources this repository owns and deploys: AI Gateway, enabled by default and needing no API token, any number of custom Gatekeepers, the Error Reporter, and KV and R2 storage.</desc>
   <style>
     .bg{fill:#f6f8fa}
     .group{fill:#fff;fill-opacity:.5;stroke:#d0d7de;stroke-dasharray:6 4}
@@ -8,6 +8,7 @@
     .card{fill:#fff;stroke:#d0d7de}
     .core{fill:#fff;stroke:#f6821f;stroke-width:1.6}
     .stack{fill:#fff;stroke:#d0d7de;opacity:.6}
+    .sep{fill:none;stroke:#d0d7de}
     .t{fill:#1f2328;font:600 13px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
     .g{fill:#1f2328;font:600 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
     .s{fill:#656d76;font:11.5px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
@@ -24,6 +25,7 @@
       .card{fill:#161b22;stroke:#30363d}
       .core{fill:#161b22}
       .stack{fill:#161b22;stroke:#30363d}
+      .sep{stroke:#30363d}
       .t,.g{fill:#e6edf3}
       .s{fill:#8b949e}
       .line{stroke:#484f58}
@@ -35,9 +37,6 @@
     }
   </style>
   <defs>
-    <marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-      <path d="M0 0 8 4 0 8z" fill="#afb8c1"/>
-    </marker>
     <marker id="ao" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
       <path d="M0 0 8 4 0 8z" fill="#f6821f"/>
     </marker>
@@ -45,59 +44,71 @@
 
   <rect class="bg" width="940" height="500" rx="12"/>
 
-  <rect class="card" x="28" y="225" width="210" height="60" rx="8"/>
-  <text class="t" x="46" y="250">Users</text>
-  <text class="s" x="46" y="268">Access, password, or OAuth</text>
+  <rect class="card" x="24" y="88" width="214" height="60" rx="8"/>
+  <text class="t" x="44" y="113">Users</text>
+  <text class="s" x="44" y="131">Access, password, or OAuth</text>
 
-  <path class="line accent" d="M238 255h18" marker-end="url(#ao)"/>
+  <path class="line accent" d="M131 148V176" marker-end="url(#ao)"/>
 
-  <rect class="group" x="266" y="48" width="294" height="414" rx="12"/>
-  <text class="g" x="286" y="78">Cloudflare OS</text>
-  <text class="s" x="286" y="96">Pinned upstream release</text>
+  <rect class="core" x="24" y="180" width="214" height="150" rx="8"/>
+  <path class="pill" d="M141 180H230A8 8 0 0 1 238 188V200H146A5 5 0 0 1 141 195Z"/>
+  <text class="pill-t" x="189.5" y="193.5" text-anchor="middle">PUBLIC ORIGIN</text>
+  <text class="t" x="44" y="225">Router</text>
+  <text class="s" x="44" y="243">The only public route</text>
+  <path class="sep" d="M44 256h174"/>
+  <text class="s" x="44" y="274">/api → Workshop backend</text>
+  <text class="s" x="44" y="292">/gatekeeper/* → Gatekeepers</text>
+  <text class="s" x="44" y="310">Everything else → frontend</text>
 
-  <rect class="core" x="286" y="112" width="254" height="64" rx="8"/>
-  <text class="t" x="304" y="140">Workshop kernel</text>
-  <text class="s" x="304" y="158">Overseer, policy, and RPC</text>
+  <path class="line accent" d="M238 255h42" marker-end="url(#ao)"/>
 
-  <rect class="card" x="286" y="196" width="254" height="64" rx="8"/>
-  <text class="t" x="304" y="224">Gadgets</text>
-  <text class="s" x="304" y="242">Sandboxed Durable Objects</text>
+  <rect class="group" x="288" y="48" width="288" height="414" rx="12"/>
+  <text class="g" x="308" y="78">Cloudflare OS</text>
+  <text class="s" x="308" y="96">Pinned upstream release</text>
 
-  <rect class="card" x="286" y="280" width="254" height="64" rx="8"/>
-  <text class="t" x="304" y="308">Blueprints</text>
-  <text class="s" x="304" y="326">Shareable Gadget templates</text>
+  <rect class="core" x="308" y="112" width="248" height="64" rx="8"/>
+  <text class="t" x="326" y="140">Workshop kernel</text>
+  <text class="s" x="326" y="158">Overseer, policy, and RPC</text>
 
-  <rect class="stack" x="294" y="372" width="254" height="64" rx="8"/>
-  <rect class="stack" x="290" y="368" width="254" height="64" rx="8"/>
-  <rect class="card" x="286" y="364" width="254" height="64" rx="8"/>
-  <text class="t" x="304" y="392">Default Gatekeepers</text>
-  <text class="s" x="304" y="410">Context and the rest of the set</text>
+  <rect class="card" x="308" y="196" width="248" height="64" rx="8"/>
+  <text class="t" x="326" y="224">Gadgets</text>
+  <text class="s" x="326" y="242">Sandboxed Durable Objects</text>
 
-  <path class="line accent" d="M560 255h46" marker-end="url(#ao)"/>
+  <rect class="card" x="308" y="280" width="248" height="64" rx="8"/>
+  <text class="t" x="326" y="308">Blueprints</text>
+  <text class="s" x="326" y="326">Shareable Gadget templates</text>
 
-  <rect class="repo" x="620" y="48" width="286" height="414" rx="12"/>
-  <text class="g" x="640" y="78">Your deployment</text>
-  <text class="s" x="640" y="96">Workers and resources you own</text>
-  <path class="pill-b" d="M822 48H894A12 12 0 0 1 906 60V70H828A6 6 0 0 1 822 64Z"/>
-  <text class="pill-bt" x="864" y="62.5" text-anchor="middle">THIS REPO</text>
+  <rect class="stack" x="316" y="372" width="248" height="64" rx="8"/>
+  <rect class="stack" x="312" y="368" width="248" height="64" rx="8"/>
+  <rect class="card" x="308" y="364" width="248" height="64" rx="8"/>
+  <text class="t" x="326" y="392">Default Gatekeepers</text>
+  <text class="s" x="326" y="410">Context and the rest of the set</text>
 
-  <rect class="card" x="640" y="112" width="246" height="64" rx="8"/>
-  <text class="t" x="658" y="140">Workers AI / AI Gateway</text>
-  <text class="s" x="658" y="158">Deployment-funded models</text>
-  <path class="pill" d="M812 112H878A8 8 0 0 1 886 120V132H817A5 5 0 0 1 812 127Z"/>
-  <text class="pill-t" x="849" y="125.5" text-anchor="middle">OPTIONAL</text>
+  <path class="line accent" d="M576 255h42" marker-end="url(#ao)"/>
 
-  <rect class="stack" x="648" y="204" width="246" height="64" rx="8"/>
-  <rect class="stack" x="644" y="200" width="246" height="64" rx="8"/>
-  <rect class="card" x="640" y="196" width="246" height="64" rx="8"/>
-  <text class="t" x="658" y="224">Custom Gatekeepers</text>
-  <text class="s" x="658" y="242">Your organization's APIs</text>
+  <rect class="repo" x="628" y="48" width="288" height="414" rx="12"/>
+  <text class="g" x="648" y="78">Your deployment</text>
+  <text class="s" x="648" y="96">Workers and resources you own</text>
+  <path class="pill-b" d="M832 48H904A12 12 0 0 1 916 60V70H838A6 6 0 0 1 832 64Z"/>
+  <text class="pill-bt" x="874" y="62.5" text-anchor="middle">THIS REPO</text>
 
-  <rect class="card" x="640" y="290" width="246" height="64" rx="8"/>
-  <text class="t" x="658" y="318">Error Reporter</text>
-  <text class="s" x="658" y="336">Workers Logs or your collector</text>
+  <rect class="card" x="648" y="112" width="248" height="64" rx="8"/>
+  <text class="t" x="666" y="140">AI Gateway</text>
+  <text class="s" x="666" y="158">Workers AI models, no API token</text>
+  <path class="pill" d="M820 112H888A8 8 0 0 1 896 120V132H825A5 5 0 0 1 820 127Z"/>
+  <text class="pill-t" x="858" y="125.5" text-anchor="middle">DEFAULT ON</text>
 
-  <rect class="card" x="640" y="374" width="246" height="64" rx="8"/>
-  <text class="t" x="658" y="402">KV + R2</text>
-  <text class="s" x="658" y="420">Provisioned in your account</text>
+  <rect class="stack" x="656" y="204" width="248" height="64" rx="8"/>
+  <rect class="stack" x="652" y="200" width="248" height="64" rx="8"/>
+  <rect class="card" x="648" y="196" width="248" height="64" rx="8"/>
+  <text class="t" x="666" y="224">Custom Gatekeepers</text>
+  <text class="s" x="666" y="242">Your organization's APIs</text>
+
+  <rect class="card" x="648" y="290" width="248" height="64" rx="8"/>
+  <text class="t" x="666" y="318">Error Reporter</text>
+  <text class="s" x="666" y="336">Workers Logs or your collector</text>
+
+  <rect class="card" x="648" y="374" width="248" height="64" rx="8"/>
+  <text class="t" x="666" y="402">KV + R2</text>
+  <text class="s" x="666" y="420">Provisioned in your account</text>
 </svg>

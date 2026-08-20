@@ -6,6 +6,8 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "types": ["./worker-configuration.d.ts"],
+    // TypeScript 7 requires this explicitly once outDir is set (TS5011).
+    "rootDir": "./src",
     "outDir": "./dist",
     "declaration": true,
     "sourceMap": true,

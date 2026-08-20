@@ -3,29 +3,42 @@
   // Find it: https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/
   "accountId": "624d34a0bb22778f8061cc71fefe58cc",
 
+  // The deployment's public origin, used for PUBLIC_BASE_URL and to scope Context data.
+  // null derives it from workers.router.route.customDomain.
+  "publicBaseUrl": null,
+
   // Worker names are permanent service identities. Keep them unique within the account.
   // Reference: docs/customization.md#workers-and-routing
   "workers": {
-    "workshop": {
-      "name": "radial-os",
+    // Owns the public URL and serves the frontend. Proxies /api and /blueprint-screenshot to the
+    // Workshop, /gatekeeper/<name> to the matching Gatekeeper, and inbound email to the email
+    // Gatekeeper.
+    "router": {
+      "name": "radial-os-router",
 
       // Production: use a hostname in an active Cloudflare zone. Wrangler creates DNS and TLS.
-      // Evaluation: replace this with "route": { "workersDev": true }.
+      // Evaluation: replace this with "route": { "workersDev": true } and set publicBaseUrl above.
       // https://developers.cloudflare.com/workers/configuration/routing/custom-domains/
       "route": { "customDomain": "radial.zone" }
     },
-    "context": { "name": "radial-os-context" },
-    "customGatekeeper": { "name": "radial-os-gatekeeper" },
-    "errorReporter": { "name": "radial-os-errors" },
 
-    // Public-origin router (this wrapper's extension). When set, the router serves the Workshop
-    // route above (assets, /api forwarding, /gatekeeper/<id> paths, inbound email) and the
-    // Workshop Worker becomes internal. Required to deploy any entry in "gatekeepers" below.
-    "router": { "name": "radial-os-router" }
+    // The Workshop backend. No public route: the router reaches it over a service binding.
+    "workshop": { "name": "radial-os" },
+    "context": { "name": "radial-os-context" },
+
+    // The Scheduler Gatekeeper, which gives agents scheduled and recurring work. Ambient like
+    // the Context Gatekeeper.
+    "scheduler": { "name": "radial-os-scheduler" },
+
+    "customGatekeeper": { "name": "radial-os-gatekeeper" },
+    "errorReporter": { "name": "radial-os-errors" }
   },
 
-  // Built-in (upstream) gatekeepers to deploy, keyed by vendor id. OAuth ones need CLIENT_ID and
-  // CLIENT_SECRET installed as secrets on their Worker after the first deploy:
+  // Additional upstream gatekeepers to deploy, keyed by vendor id (this wrapper's extension; the
+  // Workshop, Context, Scheduler and custom Gatekeeper above are upstream's own). Each deploys as
+  // its own Worker from the submodule, binds to the Workshop for vendor RPC, and is served by the
+  // router at /gatekeeper/<id>. OAuth ones need CLIENT_ID and CLIENT_SECRET installed as secrets
+  // on their Worker after the first deploy:
   //   wrangler secret put CLIENT_ID --name <worker-name>
   "gatekeepers": {
     "github": { "name": "radial-os-github" },
@@ -41,13 +54,12 @@
         "MCP_PORTAL_AUTH": "oauth"
       }
     },
-    "scheduler": { "name": "radial-os-scheduler" },
     "email": { "name": "radial-os-email" }
   },
 
   // This starter deploys Cloudflare Access mode. Cloudflare OS also supports built-in password
   // accounts and auth Gatekeeper sign-in; see the reference below before switching. The audience
-  // comes from the self-hosted Access application protecting the Workshop hostname.
+  // comes from the self-hosted Access application protecting the public hostname.
   // "admins" gates /admin in every sign-in method.
   // Reference: docs/customization.md#sign-in-methods
   "access": {
@@ -56,21 +68,27 @@
     "admins": ["kristo@radial.racing", "kristo.jorgenson@gmail.com"]
   },
 
-  // Optional platform-funded model catalog. Leave disabled to deploy without AI setup.
-  // When enabled, replace every placeholder and install CF_AI_GATEWAY_API_TOKEN separately.
-  // Reference: docs/customization.md#ai-models
+  // Model catalog served through Cloudflare AI Gateway. The Workshop reaches the gateway over its
+  // WORKERS_AI binding, which is pre-authenticated inside our own account, so no API token is
+  // needed. Reference: docs/customization.md#ai-models
   "aiGateway": {
     "enabled": true,
-    "name": "radial-os",
-    "accountId": "624d34a0bb22778f8061cc71fefe58cc",
-    "providers": ["cloudflare"],
 
-    // "direct" sends Workers AI to its REST endpoint. "gateway" adds AI Gateway logs.
-    "workersAi": { "mode": "gateway", "gateway": "radial-os" }
+    // Our own gateway, created for this deployment.
+    "name": "radial-os",
+
+    // null reuses the top-level accountId. Set only if the gateway lives in another account --
+    // that requires CF_AI_GATEWAY_API_TOKEN, since the binding cannot reach across accounts.
+    "accountId": null,
+
+    // "cloudflare" is Workers AI, which needs no key of our own. Users add external-provider
+    // models with their own keys (BYOK) in the UI.
+    "providers": ["cloudflare"]
   },
 
   "context": {
-    // Isolates Context data shared by this Workshop deployment.
+    // Isolates Context data shared by this Workshop deployment. Set before upstream offered null;
+    // the existing collections are scoped to this label, so changing it hides them.
     "sharingDomain": "production",
 
     // null: Wrangler provisions and remembers a KV namespace on first deploy.
