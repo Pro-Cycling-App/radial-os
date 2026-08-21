@@ -14,12 +14,15 @@
       "new_sqlite_classes": ["CustomGatekeeper"]
     }
   ],
-  // DATABASE_URL: the radial_os connection string (read-only pooler). Installed as a Worker secret
-  // by the deploy, never written here.
-  "secrets": { "required": ["DATABASE_URL"] },
+  // Secrets are installed on the Worker, never written here. DATABASE_URL: the radial_os connection
+  // string for production (read-only replica). NEON_API_KEY: a Viewer-role Neon key that can list
+  // branches and endpoints and nothing else; RADIAL_OS_DATABASE_PASSWORD: the role's password, the
+  // same on every branch — together they let a read target another branch.
+  "secrets": { "required": ["DATABASE_URL", "NEON_API_KEY", "RADIAL_OS_DATABASE_PASSWORD"] },
   "vars": {
     "CUSTOM_NAME": "Example organization",
-    "CUSTOM_MESSAGE": "Replace this with information useful to your organization."
+    "CUSTOM_MESSAGE": "Replace this with information useful to your organization.",
+    "NEON_PROJECT_ID": "replace-me"
   },
   "observability": {
     "enabled": true,

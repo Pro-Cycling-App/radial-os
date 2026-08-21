@@ -26,10 +26,12 @@ import type {
   SupportedResource,
   VendorDescription,
 } from "@gadgets/workshop-shared/gatekeeper";
+import { NeonBranches, type RadialBranch } from "./neon-branches.js";
 import { RadialDb } from "./radial-db.js";
 import type {
   RadialDeploymentInfo,
   RadialQueryResult,
+  RadialReadOptions,
   RadialSession,
   RadialSqlValue,
   RadialTable,
@@ -50,6 +52,78 @@ type ObservationQueue = Pick<ApprovalQueue, "authorizeObservation"> &
 
 /** The database reads a session needs; `RadialDb` in production, a stub in tests. */
 export type RadialReader = Pick<RadialDb, "query" | "listTables" | "describeTable">;
+
+/** Where a session's reads go: a reader per branch, and the branch list. */
+export interface RadialReaders {
+  /** The reader for a branch; `undefined` means production. Throws for an unknown branch. */
+  forBranch(branch: string | undefined): Promise<RadialReader>;
+  listBranches(): Promise<RadialBranch[]>;
+  refreshBranches(): Promise<RadialBranch[]>;
+}
+
+/**
+ * Production reads use the installed `DATABASE_URL` (the read-only replica). Any other branch is
+ * looked up in Neon and connected as `radial_os` with the same password — Neon copies a role and
+ * its password to every child branch, so every branch created since the role was made has it. A
+ * branch older than the role refuses the password, which is reported as such.
+ */
+export class BranchReaders implements RadialReaders {
+  readonly #production: RadialReader;
+  readonly #branches: NeonBranches;
+  readonly #password: string;
+  readonly #byBranchId = new Map<string, RadialReader>();
+
+  constructor(production: RadialReader, branches: NeonBranches, password: string) {
+    this.#production = production;
+    this.#branches = branches;
+    this.#password = password;
+  }
+
+  async forBranch(name: string | undefined): Promise<RadialReader> {
+    if (name === undefined) return this.#production;
+    const branch = await this.#branches.byName(name);
+    if (branch.isDefault) return this.#production;
+    const cached = this.#byBranchId.get(branch.id);
+    if (cached !== undefined) return cached;
+    const host = await this.#branches.host(branch);
+    const url = `postgresql://radial_os:${encodeURIComponent(this.#password)}@${host}/neondb?sslmode=require`;
+    const reader = new RadialDb(url);
+    this.#byBranchId.set(branch.id, reader);
+    return reader;
+  }
+
+  listBranches(): Promise<RadialBranch[]> {
+    return this.#branches.list();
+  }
+
+  async refreshBranches(): Promise<RadialBranch[]> {
+    this.#byBranchId.clear();
+    return this.#branches.refresh();
+  }
+}
+
+/** A single production reader and no other branches — for tests and for a deploy without Neon access. */
+export class ProductionOnly implements RadialReaders {
+  readonly #production: RadialReader;
+  constructor(production: RadialReader) {
+    this.#production = production;
+  }
+  async forBranch(name: string | undefined): Promise<RadialReader> {
+    if (name !== undefined) throw new Error("This deployment reads production only; no other branch is reachable.");
+    return this.#production;
+  }
+  async listBranches(): Promise<RadialBranch[]> {
+    return [];
+  }
+  async refreshBranches(): Promise<RadialBranch[]> {
+    return [];
+  }
+}
+
+/** "the Radial database" or "the Radial database (branch development)". */
+function databaseName(branch: string | undefined): string {
+  return branch === undefined ? "the Radial database" : `the Radial database (branch ${branch})`;
+}
 
 export function describeRadialVendor(): VendorDescription {
   return {
@@ -76,54 +150,82 @@ export function describeRadialAccount(): AccountDescription {
 
 // An observation description shows the approver what was read. For SQL that is the statement
 // itself; parameters are included so a parameterized query is as reviewable as an inlined one.
-function describeQuery(sql: string, params: RadialSqlValue[] | undefined, rowCount: number): string {
+function describeQuery(
+  sql: string, params: RadialSqlValue[] | undefined, rowCount: number, branch: string | undefined,
+): string {
   const paramsLine = params && params.length > 0
     ? `\n\nParameters: \`${JSON.stringify(params)}\``
     : "";
-  return `Ran a read-only query against the Radial database (${rowCount} row${rowCount === 1 ? "" : "s"}).` +
+  return `Ran a read-only query against ${databaseName(branch)} (${rowCount} row${rowCount === 1 ? "" : "s"}).` +
     "\n\n```sql\n" + sql + "\n```" + paramsLine;
 }
 
 @validateRpc()
 export class CustomSessionImpl extends RpcTarget implements RadialSession {
   readonly #approvalQueue: ObservationQueue;
-  readonly #db: RadialReader;
+  readonly #readers: RadialReaders;
   readonly #info: RadialDeploymentInfo;
 
-  constructor(approvalQueue: ObservationQueue, db: RadialReader, info: RadialDeploymentInfo) {
+  constructor(approvalQueue: ObservationQueue, readers: RadialReaders, info: RadialDeploymentInfo) {
     super();
     this.#approvalQueue = approvalQueue;
-    this.#db = db;
+    this.#readers = readers;
     this.#info = info;
   }
 
-  async query(sql: string, params?: RadialSqlValue[]): Promise<RadialQueryResult> {
+  async query(sql: string, params?: RadialSqlValue[], options?: RadialReadOptions): Promise<RadialQueryResult> {
     // Fetch first, then authorize: the observation can then say how much was read, and nothing is
     // returned to the caller until the queue has allowed it.
-    const result = await this.#db.query(sql, params);
+    const branch = options?.branch;
+    const db = await this.#readers.forBranch(branch);
+    const result = await db.query(sql, params);
     await this.#approvalQueue.authorizeObservation({
-      title: "Run read-only SQL on the Radial database",
-      description: describeQuery(sql, params, result.rowCount),
+      title: branch === undefined
+        ? "Run read-only SQL on the Radial database"
+        : `Run read-only SQL on the Radial database (branch ${branch})`,
+      description: describeQuery(sql, params, result.rowCount, branch),
     });
     return result;
   }
 
-  async listTables(): Promise<RadialTable[]> {
-    const tables = await this.#db.listTables();
+  async listTables(options?: RadialReadOptions): Promise<RadialTable[]> {
+    const branch = options?.branch;
+    const db = await this.#readers.forBranch(branch);
+    const tables = await db.listTables();
     await this.#approvalQueue.authorizeObservation({
       title: "List Radial database tables",
-      description: `Listed the ${tables.length} tables and views in the Radial database.`,
+      description: `Listed the ${tables.length} tables and views in ${databaseName(branch)}.`,
     });
     return tables;
   }
 
-  async describeTable(name: string): Promise<RadialTableColumn[]> {
-    const columns = await this.#db.describeTable(name);
+  async describeTable(name: string, options?: RadialReadOptions): Promise<RadialTableColumn[]> {
+    const branch = options?.branch;
+    const db = await this.#readers.forBranch(branch);
+    const columns = await db.describeTable(name);
     await this.#approvalQueue.authorizeObservation({
       title: "Describe a Radial database table",
-      description: `Read the ${columns.length} columns of \`public.${name}\`.`,
+      description: `Read the ${columns.length} columns of \`public.${name}\` in ${databaseName(branch)}.`,
     });
     return columns;
+  }
+
+  async listBranches(): Promise<RadialBranch[]> {
+    const branches = await this.#readers.listBranches();
+    await this.#approvalQueue.authorizeObservation({
+      title: "List Radial database branches",
+      description: `Listed the ${branches.length} Neon branches of the Radial database.`,
+    });
+    return branches;
+  }
+
+  async refreshBranches(): Promise<RadialBranch[]> {
+    const branches = await this.#readers.refreshBranches();
+    await this.#approvalQueue.authorizeObservation({
+      title: "Refresh Radial database branches",
+      description: `Re-read the branch list from Neon: ${branches.length} branches.`,
+    });
+    return branches;
   }
 
   async getDeploymentInfo(): Promise<RadialDeploymentInfo> {
@@ -160,7 +262,15 @@ export class CustomGatekeeper extends DurableObject<Cloudflare.Env> implements G
   }
 
   async startSession(approvalQueue: RpcStub<ApprovalQueue>): Promise<RadialSession> {
-    return new CustomSessionImpl(approvalQueue.dup(), new RadialDb(this.env.DATABASE_URL), {
+    const production = new RadialDb(this.env.DATABASE_URL);
+    // Branch switching needs the Neon Viewer key and the role password; without both, production only.
+    const readers = this.env.NEON_API_KEY && this.env.RADIAL_OS_DATABASE_PASSWORD
+      ? new BranchReaders(
+          production,
+          new NeonBranches(this.env.NEON_API_KEY, this.env.NEON_PROJECT_ID),
+          this.env.RADIAL_OS_DATABASE_PASSWORD)
+      : new ProductionOnly(production);
+    return new CustomSessionImpl(approvalQueue.dup(), readers, {
       name: this.env.CUSTOM_NAME,
       message: this.env.CUSTOM_MESSAGE,
     });

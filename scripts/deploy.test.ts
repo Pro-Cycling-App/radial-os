@@ -37,7 +37,7 @@ const validConfig: DeploymentConfig = {
     kvNamespaceId: "context-kv-id",
     artifacts: { enabled: true, namespace: "acme-context-collections" },
   },
-  customGatekeeper: { name: "Acme", message: "Use the company handbook." },
+  customGatekeeper: { name: "Acme", message: "Use the company handbook.", neonProjectId: "proj-acme" },
   errorReporting: { enabled: true, environment: "production", release: "abc123" },
   resources: {
     blueprintsKvNamespaceId: "blueprints-kv-id",
@@ -241,6 +241,7 @@ test("generates Access-mode Workshop, Context, and custom Gatekeeper configs", a
   assert.deepEqual(generated.customGatekeeper.vars, {
     CUSTOM_NAME: "Acme",
     CUSTOM_MESSAGE: "Use the company handbook.",
+    NEON_PROJECT_ID: "proj-acme",
   });
   assert.equal(generated.errorReporter!.name, "acme-cloudflare-os-errors");
   assert.deepEqual(generated.workshop.observability!.logs, {

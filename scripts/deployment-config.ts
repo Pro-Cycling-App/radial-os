@@ -152,7 +152,7 @@ export interface DeploymentConfig {
   aiGateway: AiGatewayConfigInput;
   context: ContextConfig;
   /** Display text the example custom Gatekeeper serves to agents. */
-  customGatekeeper: { name: string; message: string };
+  customGatekeeper: { name: string; message: string; neonProjectId: string };
   /** Private explicit-issue destination. */
   errorReporting: { enabled: boolean; environment?: string; release?: string | null };
   /** Workshop KV/R2. `null` requests Wrangler automatic provisioning. */

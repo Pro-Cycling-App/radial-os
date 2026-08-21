@@ -100,7 +100,9 @@
   // Reference: docs/customization.md#custom-gatekeepers
   "customGatekeeper": {
     "name": "Radial",
-    "message": "Radial is a pro-cycling fan app (radial.racing). Domain docs and code live in the Pro-Cycling-App GitHub org; the main monorepo is 'radial'."
+    "message": "Radial is a pro-cycling fan app (radial.racing). Domain docs and code live in the Pro-Cycling-App GitHub org; the main monorepo is 'radial'.",
+    // The Neon project whose branches a read may target (the Viewer key lists them).
+    "neonProjectId": "nameless-boat-48742664"
   },
 
   // Explicit backend issue reports go to a private Worker that emits structured console errors.

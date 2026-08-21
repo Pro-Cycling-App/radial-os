@@ -12,9 +12,10 @@ Auto-provisioned: no OAuth, no per-user credential — every signed-in user gets
 
 | Method | What it does |
 | --- | --- |
-| `query(sql, params?)` | Runs one read-only statement. Positional `$1…` params. Results return in full; a result above 4 MB of JSON is rejected, so `LIMIT`. |
-| `listTables()` | Tables and views in `public`. |
-| `describeTable(name)` | Columns of one table or view. |
+| `query(sql, params?, { branch? })` | Runs one read-only statement. Positional `$1…` params. Results return in full; a result above 4 MB of JSON is rejected, so `LIMIT`. |
+| `listTables({ branch? })` | Tables and views in `public`. |
+| `describeTable(name, { branch? })` | Columns of one table or view. |
+| `listBranches()` / `refreshBranches()` | The Neon branches a read may target (cached one minute; refresh re-reads now). |
 | `getDeploymentInfo()` | The operator text from `deployment.jsonc` (`customGatekeeper.name` / `.message`). |
 
 ## Why it is safe to hand out
@@ -25,6 +26,22 @@ on the public schema (default privileges cover new tables), nothing else; a role
 rejects writes at the endpoint itself. The monorepo's ADR 2026-021 is the role model; the
 credential lives in the monorepo's `sec os` unit (`RADIAL_OS_DATABASE_PASSWORD`) and the URL is
 composed from it at install time — see `docs/os/README.md` there.
+
+## Branches
+
+A read targets **production** unless `{ branch }` names another Neon branch — `development`,
+where every schema change lands first, or a rehearsal branch. `neon-branches.ts` lists branches and
+endpoint hosts through the Neon API with `NEON_API_KEY`, a **Viewer-role** member's personal key:
+Viewer reads project metadata and can neither see connection strings nor create, reset, or delete
+anything (Neon answers every mutating verb with 404 for it). The Worker composes the connection
+itself: the branch's host plus `RADIAL_OS_DATABASE_PASSWORD` — Neon copies `radial_os` and its
+password to every child branch, so one password reaches them all. Production keeps `DATABASE_URL`
+(the read-only replica); other branches have no replica, so there the role's `SELECT`-only grants
+are the whole fence. A branch older than the role refuses the password. Without both secrets the
+gatekeeper is production-only and `listBranches()` is empty.
+
+Every observation names the branch when it is not production, and so should every gadget: another
+branch's numbers are not the app's.
 
 `radial-db.ts` adds two caller-side guards on top: a deny-list of primitives that reach outside
 the database even for a `SELECT`-only role (`dblink`, `http_*`, `pg_read_file`, `COPY … PROGRAM`),

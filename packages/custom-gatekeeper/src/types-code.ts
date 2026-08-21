@@ -30,6 +30,21 @@ export interface RadialTable {
   kind: "table" | "view";
 }
 
+/** One branch of the Neon project behind the Radial database. */
+export interface RadialBranch {
+  /** The branch name — what \`branch\` options take. */
+  name: string;
+  id: string;
+  /** The project's default branch: production. */
+  isDefault: boolean;
+  createdAt: string;
+}
+
+/** Which branch a read targets. Omitted means production. */
+export interface RadialReadOptions {
+  branch?: string;
+}
+
 /** One column of a table, from \`information_schema.columns\`. */
 export interface RadialTableColumn {
   name: string;
@@ -39,13 +54,17 @@ export interface RadialTableColumn {
 }
 
 /**
- * Read-only access to the Radial production database (Postgres on Neon), the domain data behind
- * the pro-cycling app: races, editions, race days, riders, teams, results, images, and the
- * provenance tables (claims, verdicts, sources) that every fact enters through.
+ * Read-only access to the Radial database (Postgres on Neon), the domain data behind the
+ * pro-cycling app: races, editions, race days, riders, teams, results, images, and the provenance
+ * tables (claims, verdicts, sources) that every fact enters through.
  *
- * Every method is a **read**. The connection uses a role that holds \`SELECT\` and nothing else on a
- * read replica, with a 15 s statement timeout, so a statement that writes fails at the database.
- * Each call is recorded as an observation in the approval log.
+ * Every method is a **read**. The connection uses a role that holds \`SELECT\` and nothing else,
+ * with a 15 s statement timeout, so a statement that writes fails at the database. Each call is
+ * recorded as an observation in the approval log.
+ *
+ * Reads target **production** unless \`{ branch }\` names another Neon branch (\`listBranches()\`),
+ * e.g. \`development\`, where schema changes land first. Show the branch whenever it is not
+ * production: another branch's numbers are not the app's.
  */
 export interface RadialSession {
   /**
@@ -59,13 +78,19 @@ export interface RadialSession {
    * \`team_memberships\`; startlists are \`race_entries\`; \`results\`. Use \`listTables()\` and
    * \`describeTable()\` to discover the rest — never guess a column.
    */
-  query(sql: string, params?: RadialSqlValue[]): Promise<RadialQueryResult>;
+  query(sql: string, params?: RadialSqlValue[], options?: RadialReadOptions): Promise<RadialQueryResult>;
 
   /** Lists the tables and views in the \`public\` schema. */
-  listTables(): Promise<RadialTable[]>;
+  listTables(options?: RadialReadOptions): Promise<RadialTable[]>;
 
   /** Describes the columns of one \`public\` table or view. Throws if it does not exist. */
-  describeTable(name: string): Promise<RadialTableColumn[]>;
+  describeTable(name: string, options?: RadialReadOptions): Promise<RadialTableColumn[]>;
+
+  /** The Neon branches a read can target. Cached for a minute; \`refreshBranches()\` re-reads now. */
+  listBranches(): Promise<RadialBranch[]>;
+
+  /** Re-reads the branch list from Neon, for a branch created since the last list. */
+  refreshBranches(): Promise<RadialBranch[]>;
 
   /** Returns the operator-supplied description of this deployment. */
   getDeploymentInfo(): Promise<RadialDeploymentInfo>;

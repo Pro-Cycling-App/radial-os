@@ -112,6 +112,7 @@ const requiredPaths = [
   "errorReporting.enabled",
   "customGatekeeper.name",
   "customGatekeeper.message",
+  "customGatekeeper.neonProjectId",
   "observability.enabled",
   "observability.headSamplingRate",
   "observability.logs.invocationLogs",
@@ -665,6 +666,7 @@ export function generateConfigs(config: DeploymentConfig, bases: BaseConfigs): G
   customGatekeeper.vars = {
     CUSTOM_NAME: config.customGatekeeper.name,
     CUSTOM_MESSAGE: config.customGatekeeper.message,
+    NEON_PROJECT_ID: config.customGatekeeper.neonProjectId,
   };
 
   if (errorReporter) {
