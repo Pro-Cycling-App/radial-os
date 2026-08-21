@@ -156,6 +156,16 @@ describe("neon branches", () => {
     await expect(branches.byName("nope")).rejects.toThrow('No Neon branch named "nope"');
   });
 
+  it("calls fetch unbound, as the platform requires", async () => {
+    // Workers' fetch throws "Illegal invocation" when called with a foreign `this`.
+    const strict = async function (this: unknown, url: string, init: RequestInit) {
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      return fakeNeon().fetchImpl(url, init);
+    };
+    const branches = new NeonBranches("viewer-key", "proj", strict, () => 0);
+    await expect(branches.list()).resolves.toHaveLength(2);
+  });
+
   it("surfaces a rejected key as an error rather than an empty list", async () => {
     const { fetchImpl } = fakeNeon();
     const branches = new NeonBranches("wrong-key", "proj", fetchImpl, () => 0);

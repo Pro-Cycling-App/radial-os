@@ -32,7 +32,9 @@ export class NeonBranches {
   constructor(apiKey: string, projectId: string, fetchImpl: FetchLike = fetch, now: () => number = Date.now) {
     this.#apiKey = apiKey;
     this.#base = `https://console.neon.tech/api/v2/projects/${encodeURIComponent(projectId)}`;
-    this.#fetch = fetchImpl;
+    // Never store `fetch` itself: called as `this.#fetch(...)` it runs with the wrong `this`, which
+    // workerd rejects as an illegal invocation.
+    this.#fetch = (url, init) => fetchImpl(url, init);
     this.#now = now;
   }
 
