@@ -121,6 +121,14 @@ server.registerTool("list_bindings", {
   return json(await ws.listBindings(g, chatId));
 }));
 
+server.registerTool("list_gatekeepers", {
+  description: "List the gatekeeper workpieces in a workspace (e.g. the Radial database, id + suggested binding name). Use the id as bind's target.",
+  inputSchema: { workspace },
+}, tool(async ({ workspace: id }) => {
+  const ws = await session.workspace(id);
+  return json(await ws.listGatekeepers());
+}));
+
 server.registerTool("bind", {
   description: "Bind a gatekeeper workpiece into a gadget's env under a name. Fails if the name is taken or invalid.",
   inputSchema: { workspace, gadget, name: z.string(), target: z.number().int().describe("Gatekeeper workpiece id"), draft },

@@ -232,6 +232,28 @@ export class Workspace {
     return this.overseer.getGadget(id);
   }
 
+  /**
+   * The gatekeeper workpieces in this workspace (connections, ambient capsules such as the Radial
+   * database). The Workshop publishes no list of them, but gadget and gatekeeper ids come from one
+   * counter, so probing every id up to a little past the highest known gadget finds them all.
+   */
+  async listGatekeepers(): Promise<Array<{ id: WorkpieceId; title: string; url: string; suggestedBindingName?: string }>> {
+    const maxGadget = Math.max(0, ...this.gadgets().map(g => g.id));
+    const gadgetIds = new Set(this.gadgets().map(g => g.id));
+    const found: Array<{ id: WorkpieceId; title: string; url: string; suggestedBindingName?: string }> = [];
+    for (let id = 1; id <= maxGadget + 8; id++) {
+      if (gadgetIds.has(id)) continue;
+      try {
+        const gk = await this.overseer.getGatekeeperById(id);
+        const d = await gk.describe();
+        found.push({ id, title: d.title, url: d.url, suggestedBindingName: d.suggestedBindingName });
+      } catch {
+        // not a gatekeeper id
+      }
+    }
+    return found;
+  }
+
   async listBindings(id: WorkpieceId, chatId?: number): Promise<GadgetBindingInfo[]> {
     using client = await this.gadgetClient(id);
     return client.listBindings(chatId);
