@@ -1,0 +1,26 @@
+{
+  "name": "os-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local stdio MCP server that lets Claude Code author Radial OS gadgets and blueprints over the Workshop's Cap'n Web API, as the signed-in user.",
+  "bin": {
+    "os-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "types:check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gadgets/workshop-shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "capnweb": "catalog:",
+    "yjs": "^13.6.31",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260808.1",
+    "@types/node": "26.1.0",
+    "typescript": "catalog:"
+  }
+}
