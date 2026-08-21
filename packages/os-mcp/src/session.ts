@@ -39,6 +39,12 @@ function stubFor<T extends RpcTarget>(target: T): RpcStub<T> {
   return new RpcStub(target) as unknown as RpcStub<T>;
 }
 
+/** An RPC error that means a stub is dead, not that the call was wrong. */
+function isStaleStub(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /Durable Object reset|code was updated|RPC session (was )?(broken|closed|disconnected)|stub (has been|was) disposed/i.test(message);
+}
+
 /** A console log line kept in the per-workspace ring buffer. */
 export type LogLine = { seq: number; at: Date; chatId: number | null; level: string; message: unknown[] };
 
@@ -352,6 +358,22 @@ export class Session {
     await ws.start();
     this.#workspaces.set(id, ws);
     return ws;
+  }
+
+  /**
+   * Run `fn` against a workspace, reopening it once if its Overseer stub is dead. The Overseer is
+   * a Durable Object; a Workshop deploy resets it ("Durable Object reset because its code was
+   * updated") and every stub minted from it, while the socket itself stays up.
+   */
+  async retrying<T>(id: string, fn: (ws: Workspace) => Promise<T>): Promise<T> {
+    try {
+      return await fn(await this.workspace(id));
+    } catch (err) {
+      if (!isStaleStub(err)) throw err;
+      this.#workspaces.get(id)?.close();
+      this.#workspaces.delete(id);
+      return await fn(await this.workspace(id));
+    }
   }
 
   async newWorkspace(title?: string): Promise<Workspace> {
